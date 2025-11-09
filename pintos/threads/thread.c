@@ -241,19 +241,16 @@ void thread_unblock(struct thread *t)
 	enum intr_level old_level;
 
 	old_level = intr_disable();
-	bool a = intr_context();
-	struct thread *curr = thread_current();
+	// bool a = intr_context();
 	list_insert_ordered(&ready_list, &t->elem, &priority_more, NULL);
 	t->status = THREAD_READY;
-	if (curr != idle_thread)
+	if (thread_current()->priority < t->priority)
 	{
-		if (curr->priority < t->priority)
-			if (intr_context())
-				intr_yield_on_return();
-			else
-				thread_yield();
+		if (intr_context())
+			intr_yield_on_return();
+		else
+			thread_yield();
 	}
-
 	intr_set_level(old_level);
 }
 
@@ -639,10 +636,7 @@ void thread_sleep(int64_t tick)
 	if (curr != idle_thread)
 	{
 		curr->wake_tick = tick;
-		;
 		list_insert_ordered(&sleep_list, &curr->elem, &sleep_less, NULL);
-		// put the current thread to BLOCK
-		// WARNING: if this were to put outside intr_set_level, it will cause race condition
 		thread_block();
 	}
 
@@ -652,15 +646,9 @@ void thread_sleep(int64_t tick)
 /* check threads in every sleep_list and wake it up based on the wake_tick */
 void thread_wake_sleeping(int64_t current_tick)
 {
-	// Wake threads whose wake_tick <= current_tick
-
 	struct list_elem *e = list_begin(&sleep_list);
-
-	// for loop X list_remove -> it changes the pointers
-	// see list.h for the further explanations and usage
 	while (e != list_end(&sleep_list))
 	{
-		// elem is the thread field name elem
 		struct thread *t = list_entry(e, struct thread, elem);
 
 		if (t->wake_tick <= current_tick)
