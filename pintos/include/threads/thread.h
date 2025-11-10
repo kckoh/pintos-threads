@@ -154,7 +154,8 @@ void thread_sleep(int64_t wake_tick);
 void thread_wake_sleeping(int64_t current_tick);
 bool sleep_less(struct list_elem *a, struct list_elem *b, void *aux UNUSED);
 bool priority_more(struct list_elem *a, struct list_elem *b, void *aux UNUSED);
-bool sema_priority_more(struct list_elem *a, struct list_elem *b, void *aux UNUSED);
+bool priority_less(struct list_elem *a, struct list_elem *b, void *aux UNUSED);
+bool cond_priority_less(struct list_elem *a, struct list_elem *b, void *aux UNUSED);
 bool donate_more(struct list_elem *a, struct list_elem *b, void *aux UNUSED);
 
 #endif /* threads/thread.h */
