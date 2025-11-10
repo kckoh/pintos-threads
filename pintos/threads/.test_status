@@ -1,0 +1,10 @@
+priority-donate-multiple FAIL
+priority-donate-one PASS
+priority-donate-lower FAIL
+alarm-simultaneous PASS
+alarm-single PASS
+alarm-priority PASS
+alarm-zero PASS
+priority-change PASS
+alarm-negative PASS
+alarm-multiple PASS

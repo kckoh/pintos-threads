@@ -208,6 +208,8 @@ thread_create (const char *name, int priority,
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
 
+
+
 	/* Add to run queue. */
 	thread_unblock (t);
 
@@ -335,16 +337,42 @@ thread_yield (void) {
 
 void
 thread_set_priority (int new_priority) {
-	thread_current ()->priority = new_priority;
+    // dondation
 
-	if (!list_empty(&ready_list)) {
-			struct thread *front = list_entry(list_front(&ready_list),
-			                                   struct thread, elem);
-			if (front->priority > new_priority) {
-				thread_yield();
-			}
-		}
+ //    if (thread_current ()->priority < new_priority){
+ //        thread_current ()->priority = new_priority;
+ //    }
+ //    // list 구현?
+ //    thread_current ()->original_priority = new_priority;
+ //    // thread_current()->priority = thread_current()->original_priority;
 
+	// if (!list_empty(&ready_list)) {
+	// 		struct thread *front = list_entry(list_front(&ready_list),
+	// 		                                   struct thread, elem);
+	// 		if (front->priority > new_priority) {
+	// 			thread_yield();
+	// 		}
+	// 	}
+
+ if (thread_current()->priority == thread_current()->original_priority) {
+        thread_current()->priority = new_priority;
+    }
+    // New priority가 현재보다 높으면 변경 (더 높은 priority donation)
+    else if (new_priority > thread_current()->priority) {
+        thread_current()->priority = new_priority;
+    }
+    // 그 외: donated priority 유지
+
+    thread_current()->original_priority = new_priority;
+
+    // Priority가 변경되었으면 yield 고려
+    if (!list_empty(&ready_list)) {
+        struct thread *front = list_entry(list_front(&ready_list),
+                                           struct thread, elem);
+        if (front->priority > thread_current()->priority) {  // ✅ 현재 priority와 비교
+            thread_yield();
+        }
+    }
 }
 
 /* Returns the current thread's priority. */
@@ -441,6 +469,7 @@ init_thread (struct thread *t, const char *name, int priority) {
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
+	t->original_priority = priority;
 	t->magic = THREAD_MAGIC;
 }
 

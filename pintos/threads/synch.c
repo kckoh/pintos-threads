@@ -78,9 +78,9 @@ sema_down (struct semaphore *sema) {
 	old_level = intr_disable ();
 
 	while (sema->value == 0) {
-	    list_insert_ordered(&sema->waiters, &thread_current ()->elem, cmp_sema_priority, NULL);
+	    // list_insert_ordered(&sema->waiters, &thread_current ()->elem, cmp_sema_priority, NULL);
 	    // not too sure why you need to put it outside
-        // list_insert_ordered(&sema->waiters, &thread_current ()->elem, cmp_sema_priority, NULL);
+        list_insert_ordered(&sema->waiters, &thread_current ()->elem, cmp_sema_priority, NULL);
 		// list_push_back (&sema->waiters, &thread_current ()->elem);
 		thread_block ();
 	}
@@ -125,10 +125,22 @@ sema_up (struct semaphore *sema) {
 
 	old_level = intr_disable ();
 	if (!list_empty (&sema->waiters)){
-	    t = list_entry (list_pop_front (&sema->waiters),
-				struct thread, elem);
-	    thread_unblock (t);
+	    // max + remove
+		// struct list_elem *max_elem = list_max(&sema->waiters, cmp_sema_priority, NULL);
+		// list_remove(max_elem);
+
+	    // t = list_entry(max_elem, struct thread, elem);
+		t = list_entry (list_pop_front (&sema->waiters),
+					struct thread, elem);
+		thread_unblock (t);
 	}
+
+	// if (!list_empty (&sema->waiters)){
+
+	// 	    t = list_entry (list_pop_front (&sema->waiters),
+	// 				struct thread, elem);
+	// 	    thread_unblock (t);
+	// 	}
 
 	sema->value++;
 	intr_set_level (old_level);
@@ -210,6 +222,12 @@ lock_acquire (struct lock *lock) {
 	ASSERT (!intr_context ());
 	ASSERT (!lock_held_by_current_thread (lock));
 
+	// holder가 있으면 thread_current-> priorty > holder에게 전달
+
+	if (lock->holder != NULL && lock->holder->priority < thread_current()->priority ){
+	    lock->holder->priority = thread_current()->priority;
+	}
+
 	sema_down (&lock->semaphore);
 	lock->holder = thread_current ();
 }
@@ -239,12 +257,22 @@ lock_try_acquire (struct lock *lock) {
    An interrupt handler cannot acquire a lock, so it does not
    make sense to try to release a lock within an interrupt
    handler. */
+// void
+// lock_release (struct lock *lock) {
+// 	ASSERT (lock != NULL);
+// 	ASSERT (lock_held_by_current_thread (lock));
+// 	thread_current()->priority = thread_current()->original_priority;
+// 	lock->holder = NULL;
+// 	sema_up (&lock->semaphore);
+// }
 void
 lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
 
 	lock->holder = NULL;
+	thread_current()->priority = thread_current()->original_priority;
+
 	sema_up (&lock->semaphore);
 }
 
