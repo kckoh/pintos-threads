@@ -331,7 +331,10 @@ void thread_set_priority(int new_priority)
 		{
 			if (new_priority < list_entry(list_begin(&ready_list), struct thread, elem)->priority)
 			{
-				thread_yield();
+				if (intr_context())
+					intr_yield_on_return();
+				else
+					thread_yield();
 			}
 		}
 	}
@@ -679,8 +682,18 @@ bool priority_more(struct list_elem *a, struct list_elem *b, void *aux UNUSED)
 
 	return athread->priority > bthread->priority;
 }
-// a가 b보다 priority 크면 true 반환
-bool sema_priority_more(struct list_elem *a, struct list_elem *b, void *aux UNUSED)
+
+// a가 b보다 priority 작으면 true 반환 (list_max용)
+bool priority_less(struct list_elem *a, struct list_elem *b, void *aux UNUSED)
+{
+	struct thread *athread = list_entry(a, struct thread, elem);
+	struct thread *bthread = list_entry(b, struct thread, elem);
+
+	return athread->priority < bthread->priority;
+}
+
+// a가 b보다 priority 작으면 true 반환 (list_max용)
+bool cond_priority_less(struct list_elem *a, struct list_elem *b, void *aux UNUSED)
 {
 	struct semaphore_elem *asema = list_entry(a, struct semaphore_elem, elem);
 	struct semaphore_elem *besma = list_entry(b, struct semaphore_elem, elem);

@@ -68,7 +68,7 @@ void sema_down(struct semaphore *sema)
 	old_level = intr_disable();
 	while (sema->value == 0)
 	{
-		list_insert_ordered(&sema->waiters, &thread_current()->elem, priority_more, NULL);
+		list_push_back(&sema->waiters, &thread_current()->elem);
 		thread_block();
 	}
 	sema->value--;
@@ -105,7 +105,7 @@ bool sema_try_down(struct semaphore *sema)
    and wakes up one thread of those waiting for SEMA, if any.
 
    This function may be called from an interrupt handler. */
-// waiters 앞에서 하나 빼고 그거 unblock, sema++
+// waiters에서 max 빼고 그거 unblock, sema++
 void sema_up(struct semaphore *sema)
 {
 	enum intr_level old_level;
@@ -115,9 +115,11 @@ void sema_up(struct semaphore *sema)
 	old_level = intr_disable();
 	sema->value++;
 	if (!list_empty(&sema->waiters))
-		thread_unblock(list_entry(list_pop_front(&sema->waiters),
-								  struct thread, elem));
-
+	{
+		struct list_elem *e = list_max(&sema->waiters, priority_less, NULL);
+		list_remove(e);
+		thread_unblock(list_entry(e, struct thread, elem));
+	}
 	intr_set_level(old_level);
 }
 
@@ -314,7 +316,7 @@ void cond_signal(struct condition *cond, struct lock *lock UNUSED)
 
 	if (!list_empty(&cond->waiters))
 	{
-		struct list_elem *e = list_max(&cond->waiters, sema_priority_more, NULL);
+		struct list_elem *e = list_max(&cond->waiters, cond_priority_less, NULL);
 		list_remove(e);
 		sema_up(&list_entry(e, struct semaphore_elem, elem)->semaphore);
 	}
