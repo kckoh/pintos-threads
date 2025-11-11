@@ -129,6 +129,13 @@ timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
 	thread_tick ();
 
+	// TODO:thread_get_load_avg() 사용해서 구현
+	// timer_ticks () % TIMER_FREQ == 0
+
+	if(timer_ticks () % TIMER_FREQ == 0){
+	   thread_update_load_avg();
+	}
+
 	thread_wake_sleeping(ticks);
 }
 
