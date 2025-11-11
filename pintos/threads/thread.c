@@ -339,21 +339,6 @@ void
 thread_set_priority (int new_priority) {
     // dondation
 
- //    if (thread_current ()->priority < new_priority){
- //        thread_current ()->priority = new_priority;
- //    }
- //    // list 구현?
- //    thread_current ()->original_priority = new_priority;
- //    // thread_current()->priority = thread_current()->original_priority;
-
-	// if (!list_empty(&ready_list)) {
-	// 		struct thread *front = list_entry(list_front(&ready_list),
-	// 		                                   struct thread, elem);
-	// 		if (front->priority > new_priority) {
-	// 			thread_yield();
-	// 		}
-	// 	}
-
  if (thread_current()->priority == thread_current()->original_priority) {
         thread_current()->priority = new_priority;
     }

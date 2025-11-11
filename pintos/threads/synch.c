@@ -84,10 +84,7 @@ sema_down (struct semaphore *sema) {
 	old_level = intr_disable ();
 
 	while (sema->value == 0) {
-	    // list_insert_ordered(&sema->waiters, &thread_current ()->elem, cmp_sema_priority, NULL);
-	    // not too sure why you need to put it outside
-        list_insert_ordered(&sema->waiters, &thread_current ()->elem, cmp_sema_priority, NULL);
-		// list_push_back (&sema->waiters, &thread_current ()->elem);
+        list_push_back(&sema->waiters, &thread_current()->elem);
 		thread_block ();
 	}
 	sema->value--;
@@ -134,7 +131,7 @@ sema_up (struct semaphore *sema) {
 	    // max + remove
 		// struct list_elem *max_elem = list_max(&sema->waiters, cmp_sema_priority, NULL);
 		// list_remove(max_elem);
-
+		 list_sort(&sema->waiters, cmp_sema_priority, NULL);  // 한 번 더 정렬
 	    // t = list_entry(max_elem, struct thread, elem);
 		t = list_entry (list_pop_front (&sema->waiters),
 					struct thread, elem);
@@ -261,7 +258,7 @@ lock_acquire (struct lock *lock) {
         //     lock->holder->priority = cur->priority;
         // }
 
-        donate_priority(lock->holder, cur->priority);
+        donate_priority(lock->holder, cur->priority );
 	}
 
 	sema_down (&lock->semaphore);

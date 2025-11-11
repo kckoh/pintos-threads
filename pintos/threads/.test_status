@@ -14,5 +14,5 @@ priority-sema PASS
 alarm-zero PASS
 priority-change PASS
 alarm-negative PASS
-priority-donate-sema FAIL
+priority-donate-sema PASS
 alarm-multiple PASS
