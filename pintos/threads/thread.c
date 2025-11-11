@@ -335,16 +335,23 @@ thread_yield (void) {
 
 void
 thread_set_priority (int new_priority) {
-	thread_current ()->priority = new_priority;
+	struct thread *cur = thread_current();
+	cur->init_priority = new_priority;
 
+	//donation 중 가장 큰 우선순위(max) 뽑아서(구현x) -> 업데이트
+	//인터럽트가 생길수도
+	//refresh_priority를 호출해서 사용
+
+	refresh_priority();
+
+	//ready_list가 비어있지 않고 최고 우선순위 스레드가 현재보다 높으면 yield
 	if (!list_empty(&ready_list)) {
 			struct thread *front = list_entry(list_front(&ready_list),
 			                                   struct thread, elem);
-			if (front->priority > new_priority) {
+			if (front->priority > cur->priority) {
 				thread_yield();
 			}
 		}
-
 }
 
 /* Returns the current thread's priority. */
@@ -441,6 +448,11 @@ init_thread (struct thread *t, const char *name, int priority) {
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
+
+	t->init_priority = priority;
+	t->wait_on_lock = NULL;
+	list_init (&t->donations);
+
 	t->magic = THREAD_MAGIC;
 }
 
@@ -682,4 +694,85 @@ void thread_wake_sleeping(int64_t current_tick) {
         e = list_next(e);
     }
 
+}
+
+bool
+thread_compare_donate_priority (const struct list_elem *l,
+								const struct list_elem *s,
+								void *aux UNUSED)
+{
+	return list_entry(l, struct thread, donation_elem)->priority
+			> list_entry(s, struct thread, donation_elem)->priority;
+}	
+
+//우선순위 기부 릴레이를 실행
+//holder를 찾아서 8단계까지 연쇄적으로 추적하는 과정
+void
+donate_priority(void)		//서로 비교해주는 작업이 필요함!
+{
+	int depth;
+	struct thread *cur = thread_current ();
+
+	for (depth = 0; depth < 8; depth++)
+	{
+		if(!cur->wait_on_lock) break;
+		struct thread *holder = cur->wait_on_lock->holder;
+		
+		//비교 후 더 높은 우선순위만 donation
+		if (holder->priority < cur->priority)
+		{
+			holder->priority = cur->priority;
+		}
+		cur=holder;
+	}
+}
+
+//L이 락 A, B를 둘 다 가지고 있고 M은 A, H는 B를 가지고 있을 경우
+//하나를 충족하면 다른 하나가 끝날 때까지 기다릴 필요 없음
+void
+remove_with_lock(struct lock *lock)
+{
+	struct list_elem *e;
+	struct thread *cur = thread_current ();
+
+	//안전한 순회를 위해 수정
+	e=list_begin(&cur->donations);
+	while(e!=list_end(&cur->donations))
+	{
+		struct thread *t = list_entry(e, struct thread, donation_elem);
+		if(t->wait_on_lock == lock)
+		{
+			e=list_remove(e);
+		}
+		else
+		{
+			e=list_next(e);
+		}
+	}
+
+	// for (e=list_begin (&cur->donations); e!= list_end(&cur->donations);	e=list_next(e))
+	// 	{
+	// 		struct thread *t = list_entry(e, struct thread, donation_elem);
+	// 		if (t->wait_on_lock == lock)
+	// 			list_remove(&t->donation_elem);
+	// 	}
+}
+
+//remove_with_lock으로 제거해준 우선순위 재조정
+void
+refresh_priority(void)
+{
+	struct thread *cur = thread_current ();
+
+	cur->priority = cur->init_priority;
+
+	if(!list_empty (&cur->donations))
+	{
+		struct list_elem *max_elem = list_max(&cur->donations, thread_compare_donate_priority, NULL);
+
+		struct thread *max_donor = list_entry(max_elem, struct thread, donation_elem);
+
+		if (max_donor->priority > cur->priority)
+			cur->priority = max_donor->priority;
+	}
 }

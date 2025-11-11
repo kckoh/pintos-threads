@@ -1,0 +1,11 @@
+priority-donate-multiple PASS
+priority-donate-one PASS
+priority-donate-lower PASS
+priority-preempt PASS
+priority-donate-chain PASS
+priority-condvar PASS
+priority-donate-nest PASS
+priority-donate-multiple2 PASS
+priority-fifo PASS
+priority-sema PASS
+priority-donate-sema PASS
