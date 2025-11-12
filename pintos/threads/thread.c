@@ -391,9 +391,11 @@ void plus_recent_cpu(void)
 void calc_all_priority(void)
 {
 	enum intr_level old = intr_disable();
+	/* 모든 스레드에 대해서 */
 	for (struct list_elem *e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e))
 	{
 		struct thread *t = list_entry(e, struct thread, allelem);
+		/* priority 재계산, 반영 */
 		int oldp = t->priority;
 		int newp = calc_priority(t);
 		t->priority = newp;
@@ -458,6 +460,31 @@ void thread_set_nice(int nice UNUSED)
 {
 	/* TODO: Your implementation goes here */
 	/* nice 갱신 + priority 재계산 + 필요시 yield */
+	struct thread *curr = thread_current();
+
+	curr->nice = nice;
+	int oldp = curr->priority;
+	int newp = calc_priority(curr);
+	curr->priority = newp;
+
+	/* 우선순위 바뀌었으니 재배치 */
+	if (newp != oldp)
+	{
+		list_remove(&curr->elem);
+		list_push_back(&ready_q[newp], &curr->elem);
+
+		if (list_empty(&ready_q[oldp]))
+			ready_bitmap &= ~(1ULL << oldp);
+		ready_bitmap |= (1ULL << newp);
+	}
+	/* yield */
+	if (oldp > newp)
+	{
+		if (intr_context())
+			intr_yield_on_return();
+		else
+			thread_yield();
+	}
 }
 
 /* Returns the current thread's nice value. */
