@@ -419,11 +419,11 @@ void thread_update_priority(struct thread *t){
     t->priority = new_priority;
 
     // if priority is changed, update the priority
-    if (t->status == THREAD_READY && old_priority != new_priority) {
-        // Ready list에서 제거하고 다시 추가
-        list_remove(&t->elem);
-        list_push_back(&ready_list[new_priority], &t->elem);
-    }
+    // if (t->status == THREAD_READY && old_priority != new_priority) {
+    //     // Ready list에서 제거하고 다시 추가
+    //     list_remove(&t->elem);
+    //     list_push_back(&ready_list[new_priority], &t->elem);
+    // }
 
     // thread_set_priority(new_priority);
 }
