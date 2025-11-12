@@ -8,6 +8,7 @@
 #ifdef VM
 #include "vm/vm.h"
 #endif
+#include "threads/fixed.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -96,6 +97,11 @@ struct thread
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem; /* List element. */
 
+	/* advanced 변수 */
+	int nice;
+	int64_t recent_cpu;
+	struct list_elem allelem;
+
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4; /* Page map level 4 */
@@ -151,5 +157,11 @@ bool sleep_less(struct list_elem *a, struct list_elem *b, void *aux UNUSED);
 bool priority_more(struct list_elem *a, struct list_elem *b, void *aux UNUSED);
 bool priority_less(struct list_elem *a, struct list_elem *b, void *aux UNUSED);
 bool cond_priority_less(struct list_elem *a, struct list_elem *b, void *aux UNUSED);
+
+/* advanced */
+void plus_recent_cpu(void);
+void calc_all_priority(void);
+void calc_recent_cpu(void);
+int calc_priority(struct thread *t);
 
 #endif /* threads/thread.h */

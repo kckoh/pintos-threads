@@ -28,6 +28,10 @@
    that are ready to run but not actually running. */
 static struct list ready_list;
 
+static struct list all_list;
+static struct list ready_q[64]; // 우선순위별 FIFO 큐
+static uint64_t ready_bitmap;	// 비어있지 않은 큐 비트표시
+
 static struct list sleep_list;
 
 /* Idle thread. */
@@ -55,6 +59,8 @@ static unsigned thread_ticks; /* # of timer ticks since last yield. */
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
+/* advanced용 전역 변수 */
+static int64_t load_avg;
 
 static void kernel_thread(thread_func *, void *aux);
 
@@ -107,15 +113,24 @@ void thread_init(void)
 
 	/* Init the globla thread context */
 	lock_init(&tid_lock);
-	list_init(&ready_list);
+	// list_init(&ready_list);
+	for (int i = 0; i < 64; i++)
+		list_init(&ready_q[i]);
+	list_init(&all_list);
 	list_init(&sleep_list);
 	list_init(&destruction_req);
 
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread();
+	initial_thread->nice = 0;
+	initial_thread->recent_cpu = 0;
 	init_thread(initial_thread, "main", PRI_DEFAULT);
 	initial_thread->status = THREAD_RUNNING;
 	initial_thread->tid = allocate_tid();
+
+	// MLFQS
+	load_avg = 0;
+	ready_bitmap = 0;
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -126,7 +141,6 @@ void thread_start(void)
 	struct semaphore idle_started;
 	sema_init(&idle_started, 0);
 	thread_create("idle", PRI_MIN, idle, &idle_started);
-
 	/* Start preemptive thread scheduling. */
 	intr_enable();
 
@@ -194,6 +208,14 @@ tid_t thread_create(const char *name, int priority,
 	init_thread(t, name, priority);
 	tid = t->tid = allocate_tid();
 
+	struct thread *parent = thread_current();
+	if (t != idle_thread)
+	{
+		t->nice = parent->nice;
+		t->recent_cpu = parent->recent_cpu;
+	}
+	t->priority = calc_priority(t);
+
 	/* Call the kernel_thread if it scheduled.
 	 * Note) rdi is 1st argument, and rsi is 2nd argument. */
 	t->tf.rip = (uintptr_t)kernel_thread;
@@ -241,8 +263,11 @@ void thread_unblock(struct thread *t)
 	enum intr_level old_level;
 
 	old_level = intr_disable();
-	// bool a = intr_context();
-	list_insert_ordered(&ready_list, &t->elem, &priority_more, NULL);
+	/* ready_q에 넣기, bitmap 업데이트 */
+	int p = t->priority;
+	list_push_back(&ready_q[p], &t->elem);
+	ready_bitmap |= (1ull << p);
+
 	t->status = THREAD_READY;
 	if (thread_current()->priority < t->priority)
 	{
@@ -299,6 +324,11 @@ void thread_exit(void)
 	/* Just set our status to dying and schedule another process.
 	   We will be destroyed during the call to schedule_tail(). */
 	intr_disable();
+
+	struct thread *cur = thread_current();
+	if (cur != initial_thread)
+		list_remove(&cur->allelem);
+
 	do_schedule(THREAD_DYING);
 	NOT_REACHED();
 }
@@ -314,7 +344,11 @@ void thread_yield(void)
 
 	old_level = intr_disable();
 	if (curr != idle_thread)
-		list_insert_ordered(&ready_list, &curr->elem, priority_more, NULL);
+	{
+		int p = curr->priority;
+		list_push_back(&ready_q[p], &curr->elem);
+		ready_bitmap |= (1ull << p);
+	}
 	do_schedule(THREAD_READY);
 	intr_set_level(old_level);
 }
@@ -345,32 +379,108 @@ int thread_get_priority(void)
 {
 	return thread_current()->priority;
 }
+/* 매 틱마다 recent_cpu++, timer.c에서 호출 ==*/
+void plus_recent_cpu(void)
+{
+	struct thread *curr = thread_current();
+	if (curr != idle_thread)
+		curr->recent_cpu = fadd(curr->recent_cpu, itof(1));
+}
+
+/* 모든 스레드의 priority 재계산, timer.c에서 호출 */
+void calc_all_priority(void)
+{
+	enum intr_level old = intr_disable();
+	for (struct list_elem *e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e))
+	{
+		struct thread *t = list_entry(e, struct thread, allelem);
+		int oldp = t->priority;
+		int newp = calc_priority(t);
+		t->priority = newp;
+
+		/* READY면 큐 재배치 */
+		if (t->status == THREAD_READY && newp != oldp)
+		{
+			list_remove(&t->elem);
+			list_push_back(&ready_q[newp], &t->elem);
+
+			if (list_empty(&ready_q[oldp]))
+				ready_bitmap &= ~(1ULL << oldp);
+			ready_bitmap |= (1ULL << newp);
+		}
+	}
+	intr_set_level(old);
+}
+
+int calc_priority(struct thread *t)
+{
+	/* priority = PRI_MAX - (recent_cpu/4) - (nice*2) */
+	int newp = PRI_MAX - ftoi_trunc(fdiv_i(t->recent_cpu, 4)) - (t->nice * 2);
+	if (newp < PRI_MIN)
+		newp = PRI_MIN;
+	else if (newp > PRI_MAX)
+		newp = PRI_MAX;
+
+	return newp;
+}
+
+/* 매 1초마다 load_avg 갱신 후 모든 스레드 recent_cpu 재계산, timer.c에서 호출 */
+void calc_recent_cpu(void)
+{
+	/*스레드 수 계산*/
+	int ready_len = 0;
+	for (int i = 0; i < 64; i++)
+	{
+		ready_len += list_size(&ready_q[i]);
+	}
+	if (thread_current() != idle_thread)
+		ready_len += 1;
+
+	/* load_avg 갱신 */
+	int64_t c1 = fdiv_i(itof(59), 60);
+	int64_t c2 = fdiv_i(itof(1), 60);
+	load_avg = fadd(fmul(c1, load_avg), fmul(c2, itof(ready_len)));
+
+	/* 모든 스레드 recent_cpu 갱신*/
+	int64_t two = itof(2);
+	int64_t lala = fdiv(fmul(two, load_avg), fadd(fmul(two, load_avg), itof(1)));
+
+	struct list_elem *e;
+	for (e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e))
+	{
+		struct thread *t = list_entry(e, struct thread, allelem);
+		t->recent_cpu = fadd(fmul(lala, t->recent_cpu), itof(t->nice));
+	}
+}
 
 /* Sets the current thread's nice value to NICE. */
 void thread_set_nice(int nice UNUSED)
 {
 	/* TODO: Your implementation goes here */
+	/* nice 갱신 + priority 재계산 + 필요시 yield */
 }
 
 /* Returns the current thread's nice value. */
 int thread_get_nice(void)
 {
-	/* TODO: Your implementation goes here */
-	return 0;
+	/* 현재 스레드의 nice 반환 */
+	return thread_current()->nice;
 }
 
 /* Returns 100 times the system load average. */
 int thread_get_load_avg(void)
 {
 	/* TODO: Your implementation goes here */
-	return 0;
+	/* load_avg * 100 (반올림) */
+	return ftoi_round(fmul_i(load_avg, 100));
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int thread_get_recent_cpu(void)
 {
 	/* TODO: Your implementation goes here */
-	return 0;
+	/* recent_cpu * 100 (반올림) */
+	return ftoi_round(fmul_i(thread_current()->recent_cpu, 100));
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -436,8 +546,11 @@ static void init_thread(struct thread *t, const char *name, int priority)
 	t->status = THREAD_BLOCKED;
 	strlcpy(t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t)t + PGSIZE - sizeof(void *);
-	t->priority = priority;
 	t->magic = THREAD_MAGIC;
+
+	t->priority = calc_priority(t);
+	if (t != idle_thread)
+		list_push_back(&all_list, &t->allelem);
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
@@ -445,13 +558,21 @@ static void init_thread(struct thread *t, const char *name, int priority)
    empty.  (If the running thread can continue running, then it
    will be in the run queue.)  If the run queue is empty, return
    idle_thread. */
+/* bitmap 확인해서 없으면 idle, 있으면 해당 que에서 pop 리턴. 뺐을 때 리스트 null이면 bitmap 업데이트*/
 static struct thread *
 next_thread_to_run(void)
 {
-	if (list_empty(&ready_list))
+	if (!ready_bitmap)
 		return idle_thread;
 	else
-		return list_entry(list_pop_front(&ready_list), struct thread, elem);
+	{
+		int qn = 63 - __builtin_clzll(ready_bitmap);
+		struct thread *t = list_entry(list_pop_front(&ready_q[qn]), struct thread, elem);
+		if (list_empty(&ready_q[qn]))
+			ready_bitmap &= ~(1ull << qn);
+
+		return t;
+	}
 }
 
 /* Use iretq to launch the thread */
