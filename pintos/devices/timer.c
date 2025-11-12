@@ -7,7 +7,7 @@
 #include "threads/io.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
-
+#include "threads/fix-point.h"
 /* See [8254] for hardware details of the 8254 timer chip. */
 
 #if TIMER_FREQ < 19
@@ -122,18 +122,27 @@ void
 timer_print_stats (void) {
 	printf ("Timer: %"PRId64" ticks\n", timer_ticks ());
 }
-
+
 /* Timer interrupt handler. */
 static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
 	thread_tick ();
 
-	// TODO:thread_get_load_avg() 사용해서 구현
-	// timer_ticks () % TIMER_FREQ == 0
+ // update recent cpu for the current thread
+    if (!is_current_idle()){
+        thread_current()->recent_cpu = FP_ADD_INT(thread_current()->recent_cpu, 1);
+    }
 
-	if(timer_ticks () % TIMER_FREQ == 0){
-	   thread_update_load_avg();
+    // Every 4 tick updates the the current priority
+    if (ticks % 4 == 0) {
+        thread_update_priority(thread_current());
+    }
+
+    // every second, priority + recent cpu + load_avg are updated
+	if(ticks % TIMER_FREQ == 0){
+	    thread_update_load_avg();
+		thread_update_recent_cpu_all();
 	}
 
 	thread_wake_sleeping(ticks);

@@ -246,7 +246,8 @@ lock_acquire (struct lock *lock) {
 
 	// holder가 있으면 thread_current-> priorty > holder에게 전달
 	// lock->holder->donations안에다가 추가하기
-	if (lock->holder != NULL){
+	// MLFQS가 아닐 때만 priority donation
+	if (!thread_mlfqs && lock->holder != NULL){
 	    // wait_on_lock is added here;
 		// this gets used when removing the donations
 	    cur->wait_on_lock = lock;
@@ -342,11 +343,14 @@ lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
 
-	// donations
-	remove_donations_lock(lock);
+	// MLFQS가 아닐 때만 donation 처리
+	if (!thread_mlfqs) {
+		// donations
+		remove_donations_lock(lock);
 
-	// 남은 donation 중 최댓값으로 priority 복원
-	refresh_priority();
+		// 남은 donation 중 최댓값으로 priority 복원
+		refresh_priority();
+	}
 
 	lock->holder = NULL;
 	// thread_current()->priority = thread_current()->original_priority;

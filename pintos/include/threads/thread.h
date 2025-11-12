@@ -96,6 +96,8 @@ struct thread {
 	struct list_elem donation_elem;     /* 내가 다른 thread의 donations에 추가될 때 사용 */
 	struct lock *wait_on_lock;          /* Lock that this thread is waiting for */
 	int64_t wake_tick;                  /* Time to wake up (for timer_sleep) */
+	int nice;
+	int recent_cpu;
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
 
@@ -145,8 +147,11 @@ void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 void thread_update_load_avg (void);
+void thread_update_recent_cpu(struct thread *t);
+void thread_update_recent_cpu_all(void);
 
 void do_iret (struct intr_frame *tf);
+bool is_current_idle(void);
 
 // thread clock alarm
 void thread_sleep(int64_t wake_tick);
