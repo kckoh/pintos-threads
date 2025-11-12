@@ -113,7 +113,6 @@ void thread_init(void)
 
 	/* Init the globla thread context */
 	lock_init(&tid_lock);
-	// list_init(&ready_list);
 	for (int i = 0; i < 64; i++)
 		list_init(&ready_q[i]);
 	list_init(&all_list);
@@ -414,6 +413,7 @@ void calc_all_priority(void)
 	intr_set_level(old);
 }
 
+/* priority 계산 */
 int calc_priority(struct thread *t)
 {
 	/* priority = PRI_MAX - (recent_cpu/4) - (nice*2) */
@@ -456,29 +456,16 @@ void calc_recent_cpu(void)
 }
 
 /* Sets the current thread's nice value to NICE. */
+/* nice 갱신 + priority 재계산 + 필요시 yield */
 void thread_set_nice(int nice UNUSED)
 {
-	/* TODO: Your implementation goes here */
-	/* nice 갱신 + priority 재계산 + 필요시 yield */
 	struct thread *curr = thread_current();
 
 	curr->nice = nice;
 	int oldp = curr->priority;
-	int newp = calc_priority(curr);
-	curr->priority = newp;
+	curr->priority = calc_priority(curr);
 
-	/* 우선순위 바뀌었으니 재배치 */
-	if (newp != oldp)
-	{
-		list_remove(&curr->elem);
-		list_push_back(&ready_q[newp], &curr->elem);
-
-		if (list_empty(&ready_q[oldp]))
-			ready_bitmap &= ~(1ULL << oldp);
-		ready_bitmap |= (1ULL << newp);
-	}
-	/* yield */
-	if (oldp > newp)
+	if (oldp > curr->priority)
 	{
 		if (intr_context())
 			intr_yield_on_return();

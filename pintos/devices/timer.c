@@ -130,19 +130,16 @@ static void
 timer_interrupt(struct intr_frame *args UNUSED)
 {
 	ticks++;
-	/* todo : 매 틱마다 recent_cpu++
-				매 1초마다 load_avg 갱신 후 모든 스레드 recent_cpu 재계산 코드 호출
-				매 4틱마다 모든 스레드의 priority 재계산 코드 호출*/
 	// 매 틱마다 recent_cpu++
 	plus_recent_cpu();
-
-	// 매 4틱마다 모든 스레드의 priority 재계산 코드 호출
-	if (timer_ticks() % 4 == 0)
-		calc_all_priority();
 
 	// 매 1초마다 load_avg 갱신 후 모든 스레드 recent_cpu 재계산 코드 호출
 	if (timer_ticks() % TIMER_FREQ == 0)
 		calc_recent_cpu();
+
+	// 매 4틱마다 모든 스레드의 priority 재계산 코드 호출
+	if (timer_ticks() % 4 == 0)
+		calc_all_priority();
 
 	thread_wake_sleeping(ticks);
 	thread_tick();

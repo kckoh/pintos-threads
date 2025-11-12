@@ -1,5 +1,5 @@
 mlfqs-fair-20 PASS
-mlfqs-nice-2 FAIL
+mlfqs-nice-2 PASS
 priority-preempt PASS
 alarm-simultaneous PASS
 priority-condvar PASS
@@ -16,4 +16,4 @@ priority-change PASS
 alarm-negative PASS
 alarm-multiple PASS
 mlfqs-load-1 PASS
-mlfqs-nice-10 FAIL
+mlfqs-nice-10 PASS
