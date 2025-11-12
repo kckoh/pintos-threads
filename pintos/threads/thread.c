@@ -212,8 +212,8 @@ tid_t thread_create(const char *name, int priority,
 	{
 		t->nice = parent->nice;
 		t->recent_cpu = parent->recent_cpu;
+		t->priority = calc_priority(t);
 	}
-	t->priority = calc_priority(t);
 
 	/* Call the kernel_thread if it scheduled.
 	 * Note) rdi is 1st argument, and rsi is 2nd argument. */
@@ -389,7 +389,7 @@ void plus_recent_cpu(void)
 /* 모든 스레드의 priority 재계산, timer.c에서 호출 */
 void calc_all_priority(void)
 {
-	enum intr_level old = intr_disable();
+
 	/* 모든 스레드에 대해서 */
 	for (struct list_elem *e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e))
 	{
@@ -410,7 +410,6 @@ void calc_all_priority(void)
 			ready_bitmap |= (1ULL << newp);
 		}
 	}
-	intr_set_level(old);
 }
 
 /* priority 계산 */
@@ -573,8 +572,7 @@ static void init_thread(struct thread *t, const char *name, int priority)
    will be in the run queue.)  If the run queue is empty, return
    idle_thread. */
 /* bitmap 확인해서 없으면 idle, 있으면 해당 que에서 pop 리턴. 뺐을 때 리스트 null이면 bitmap 업데이트*/
-static struct thread *
-next_thread_to_run(void)
+static struct thread *next_thread_to_run(void)
 {
 	if (!ready_bitmap)
 		return idle_thread;
