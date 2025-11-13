@@ -94,6 +94,16 @@ struct thread {
 	int64_t wake_tick;                  /* Time to wake up (for timer_sleep) */
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
+	struct list_elem allelem;           /* List element for all threads list. */
+
+	int init_priority;              /* 기부 받기 전의 원래 우선순위 */
+    struct lock *wait_on_lock;      /* 이 스레드가 현재 대기 중인 락 */
+    struct list donations;          /* 이 스레드에게 기부한 스레드들의 리스트 */
+    struct list_elem donation_elem; /* donations 리스트를 위한 elem */
+
+	int nice;
+	int recent_cpu;
+
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
@@ -146,5 +156,14 @@ void do_iret (struct intr_frame *tf);
 // thread clock alarm
 void thread_sleep(int64_t wake_tick);
 void thread_wake_sleeping(int64_t current_tick);
+
+void mlfqs_recalculate_recent_cpu(void);
+void mlfqs_recalculate_priority(void);
+
+void thread_test_preemption(void);
+void mlfqs_calculate_priority(struct thread *t);
+void mlfqs_calculate_recent_cpu(struct thread *t);
+void mlfqs_calculate_load_avg(void);
+void mlfqs_increment_recent_cpu(void);
 
 #endif /* threads/thread.h */

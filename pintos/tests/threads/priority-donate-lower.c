@@ -31,6 +31,7 @@ test_priority_donate_lower (void)
 
   msg ("Lowering base priority...");
   thread_set_priority (PRI_DEFAULT - 10);
+  //이 사이에 인터럽트 들어올 수도 있음!
   msg ("Main thread should have priority %d.  Actual priority: %d.",
        PRI_DEFAULT + 10, thread_get_priority ());
   lock_release (&lock);
