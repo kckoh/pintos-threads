@@ -93,6 +93,13 @@ struct thread {
 	int priority;                       /* Priority. */
 	int64_t wake_tick;                  /* Time to wake up (for timer_sleep) */
 	/* Shared between thread.c and synch.c. */
+
+	/* Priority donation fields */
+	int init_priority;                  /* Original priority before donation */
+	struct lock *wait_on_lock;          /* Lock that this thread is waiting for */
+	struct list donations;              /* List of threads donating priority to this thread */
+	struct list_elem donation_elem;     /* List element for donation list */
+	
 	struct list_elem elem;              /* List element. */
 
 #ifdef USERPROG
