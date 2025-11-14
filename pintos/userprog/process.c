@@ -23,9 +23,11 @@
 #endif
 
 static void process_cleanup (void);
-static bool load (const char *file_name, struct intr_frame *if_);
+static bool load (const char *file_name, char **argv, int argc, struct intr_frame *if_);
+//static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
+static void stack_build (char **argv, int argc, struct intr_frame *if_);
 
 /* General process initializer for initd and other process. */
 static void
@@ -49,6 +51,9 @@ process_create_initd (const char *file_name) {
 	if (fn_copy == NULL)
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
+
+	char* save_ptr;
+	file_name = strtok_r (file_name, " ", &save_ptr);
 
 	/* Create a new thread to execute FILE_NAME. */
 	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
@@ -162,12 +167,24 @@ error:
  * Returns -1 on fail. */
 int
 process_exec (void *f_name) {
-	char *file_name = f_name;
+	char *file_name;
 	bool success;
 
 	/* We cannot use the intr_frame in the thread structure.
 	 * This is because when current thread rescheduled,
 	 * it stores the execution information to the member. */
+	char *argv[128];
+	int argc = 0;
+
+	char *token, *save_ptr;
+	for (token = strtok_r(f_name, " ", &save_ptr); token != NULL;
+		 token = strtok_r(NULL, " ", &save_ptr))
+	{
+		argv[argc++] = token;
+	}
+	file_name = argv[0];
+
+	
 	struct intr_frame _if;
 	_if.ds = _if.es = _if.ss = SEL_UDSEG;
 	_if.cs = SEL_UCSEG;
@@ -177,7 +194,7 @@ process_exec (void *f_name) {
 	process_cleanup ();
 
 	/* And then load the binary */
-	success = load (file_name, &_if);
+	success = load (file_name, argv, argc, &_if);
 
 	/* If load failed, quit. */
 	palloc_free_page (file_name);
@@ -204,6 +221,11 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
+
+	while(1){
+		thread_yield();
+	}
+
 	return -1;
 }
 
@@ -321,7 +343,7 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
  * and its initial stack pointer into *RSP.
  * Returns true if successful, false otherwise. */
 static bool
-load (const char *file_name, struct intr_frame *if_) {
+load (const char *file_name, char **argv, int argc, struct intr_frame *if_) {
 	struct thread *t = thread_current ();
 	struct ELF ehdr;
 	struct file *file = NULL;
@@ -413,9 +435,9 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	/* Start address. */
 	if_->rip = ehdr.e_entry;
-
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
+	stack_build(argv, argc, if_);
 
 	success = true;
 
@@ -424,6 +446,53 @@ done:
 	file_close (file);
 	return success;
 }
+
+static void 
+stack_build (char **argv, int argc, struct intr_frame *if_) {
+
+	/* 스택에 push 구현하자*/
+	char *rsp = (char *)if_->rsp;
+
+	// 스택에 문자열 쌓기
+	for (int i = argc - 1; i >= 0; i--)
+	{
+		size_t tlen = strlen(argv[i]) + 1; // NULL 포함 길이(strlen은 null 제외함)
+		rsp -= tlen;					   // 스택 공간 확보
+		memcpy(rsp, argv[i], tlen);		   // 문자열 복사
+		argv[i] = rsp;					   // 실제 user stack 주소로 업데이트
+	}
+
+	// 3) 패딩 추가(8정렬), 스택 0 초기화라 그냥 내리면 됨
+	uintptr_t align_rsp = (uintptr_t)rsp;
+	align_rsp &= ~((uintptr_t)0x7);
+	rsp = (char *)align_rsp;
+
+	// 4) argv를 추가
+	rsp -= sizeof(char *);
+	*(char **)rsp = NULL; // NULL추가
+
+	for (int i = argc - 1; i >= 0; i--)
+	{
+		rsp -= sizeof(char *);
+		*(char **)rsp = argv[i];
+	}
+
+	char *argv0_rsp = rsp;
+
+	/* 스택에 쌓았으면 if_->rdi에는 갯수, if_->rsi에는 argv 푸시한 시작 주소를 넣어준다?*/
+	if_->R.rdi = argc;
+	if_->R.rsi = rsp; // argv[0]의 주소임
+
+	// 5) 가짜 리턴 주소 추가
+	rsp -= sizeof(void *);
+	*(void **)rsp = 0;
+
+	if_->R.rdi = argc;
+	if_->R.rsi = argv0_rsp; // argv[0]의 주소
+	if_->rsp = rsp;
+}
+
+
 
 
 /* Checks whether PHDR describes a valid, loadable segment in
