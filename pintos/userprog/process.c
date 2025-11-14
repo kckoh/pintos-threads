@@ -52,6 +52,7 @@ process_create_initd (const char *file_name) {
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
 
+	//thread에 file_name만 전달하도록
 	char* save_ptr;
 	file_name = strtok_r (file_name, " ", &save_ptr);
 
@@ -223,7 +224,9 @@ process_wait (tid_t child_tid UNUSED) {
 	 * XXX:       implementing the process_wait. */
 
 	while(1){
-		thread_yield();
+		int64_t tick = timer_ticks();
+		if (tick / 100 == 10)
+			break;
 	}
 
 	return -1;
@@ -237,7 +240,7 @@ process_exit (void) {
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
-
+	printf("%s: exit(%d)\n", curr->name, curr->tf.R.rax);
 	process_cleanup ();
 }
 
@@ -491,9 +494,6 @@ stack_build (char **argv, int argc, struct intr_frame *if_) {
 	if_->R.rsi = argv0_rsp; // argv[0]의 주소
 	if_->rsp = rsp;
 }
-
-
-
 
 /* Checks whether PHDR describes a valid, loadable segment in
  * FILE and returns true if so, false otherwise. */
