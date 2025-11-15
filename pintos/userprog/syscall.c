@@ -64,9 +64,13 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	// TODO: Your implementation goes here.
 
 	uint64_t syscall_num = f->R.rax;
-
+	struct thread *curr = thread_current ();
 	switch (syscall_num)
 	{
+		case SYS_HALT:
+			power_off();
+			break;
+
 		case SYS_EXIT:
 			/*  - 현재 프로세스 종료
 				- 부모가 wait()을 호출하면 status를 반환
@@ -78,7 +82,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			int status = f->R.rdi;
 			f->R.rax = status;
 			thread_exit();
-			break;ㅊ
+			break;
 
 		case SYS_WRITE:
 			/*  - fd 1 → console 출력 (putbuf 사용)

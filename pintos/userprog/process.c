@@ -482,14 +482,11 @@ stack_build (char **argv, int argc, struct intr_frame *if_) {
 
 	char *argv0_rsp = rsp;
 
-	/* 스택에 쌓았으면 if_->rdi에는 갯수, if_->rsi에는 argv 푸시한 시작 주소를 넣어준다?*/
-	if_->R.rdi = argc;
-	if_->R.rsi = rsp; // argv[0]의 주소임
-
 	// 5) 가짜 리턴 주소 추가
 	rsp -= sizeof(void *);
 	*(void **)rsp = 0;
-
+	
+	/* 스택에 쌓았으면 if_->rdi에는 갯수, if_->rsi에는 argv 푸시한 시작 주소를 넣어준다?*/
 	if_->R.rdi = argc;
 	if_->R.rsi = argv0_rsp; // argv[0]의 주소
 	if_->rsp = rsp;
