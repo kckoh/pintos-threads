@@ -41,6 +41,41 @@ syscall_init (void) {
 void
 syscall_handler (struct intr_frame *f UNUSED) {
 	// TODO: Your implementation goes here.
-	printf ("system call!\n");
-	thread_exit ();
+	uint64_t syscall_num = f->R.rax;
+	switch (syscall_num)
+	{
+		case SYS_EXIT:
+		{
+			int status = f->R.rdi;
+			printf("%s: exit(%d)\n", thread_current()->name, status);
+			thread_exit();
+			break;
+		}
+		case SYS_WRITE:
+		{
+			int fd = f->R.rdi;	//1번째 인자 : RDI
+			const void *buffer = f->R.rsi; //2번째 인자 : RSI
+			unsigned size = f->R.rdx;	//3번째 인자 : RDX
+			
+			int bytes_written = 0;
+
+			//STDOUT_FILENO==1
+			if(fd==1)
+			{
+				putbuf(buffer, size);
+				bytes_written = size;
+			}
+			else
+			{
+				bytes_written = -1;
+			}
+
+			f->R.rax = bytes_written;
+			break;
+		}
+		default:
+		{
+			printf("Unknown system call number: %llu\n",syscall_num);
+		}
+	}
 }

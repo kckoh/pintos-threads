@@ -27,6 +27,8 @@ static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
 
+static bool setup_user_stack(const char *cmd_line, struct intr_frame *if_);
+
 /* General process initializer for initd and other process. */
 static void
 process_init (void) {
@@ -50,8 +52,14 @@ process_create_initd (const char *file_name) {
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
 
+	//프로그램 이름만 추출(스레드 이름용)
+	char prog_name[128];
+	strlcpy(prog_name, file_name, 128);
+	char *save_ptr;
+	strtok_r(prog_name, " ", &save_ptr); //첫 번째 토큰만 남김
+
 	/* Create a new thread to execute FILE_NAME. */
-	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
+	tid = thread_create (prog_name, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
 	return tid;
@@ -162,7 +170,7 @@ error:
  * Returns -1 on fail. */
 int
 process_exec (void *f_name) {
-	char *file_name = f_name;
+	char *cmd_line = f_name;
 	bool success;
 
 	/* We cannot use the intr_frame in the thread structure.
@@ -177,16 +185,75 @@ process_exec (void *f_name) {
 	process_cleanup ();
 
 	/* And then load the binary */
-	success = load (file_name, &_if);
+	success = load (cmd_line, &_if);
 
 	/* If load failed, quit. */
-	palloc_free_page (file_name);
+	
 	if (!success)
 		return -1;
-
+		
 	/* Start switched process. */
 	do_iret (&_if);
 	NOT_REACHED ();
+}
+
+//유저 스택에 인자들을 설정하는 함수
+static bool
+setup_user_stack(const char *cmd_line, struct intr_frame *if_)
+{
+	char cmd_copy[512];
+	strlcpy(cmd_copy, cmd_line, 512);
+
+	char *token, *save_ptr;
+	const int MAX_ARGS = 128;
+	char *argv_tokens[MAX_ARGS];
+	int argc = 0;
+
+	for(token = strtok_r(cmd_copy, " ", &save_ptr); token != NULL;
+		token = strtok_r(NULL, " ", &save_ptr))
+	{
+		if (argc < MAX_ARGS)
+		{
+			argv_tokens[argc++] = token;
+		}
+		else
+		{
+			return false;
+		}
+	}
+
+	uintptr_t rsp = if_->rsp;
+	uintptr_t argv_addrs[MAX_ARGS];
+
+	for(int i=argc-1; i>=0; i--)
+	{
+		size_t len = strlen(argv_tokens[i])+1;
+		rsp -= len;
+		memcpy((void *)rsp, argv_tokens[i], len);
+		argv_addrs[i] = rsp;
+	}
+
+	rsp = rsp & ~(uintptr_t)7;
+
+	rsp -= 8;
+	*(uintptr_t *)rsp = 0;
+
+	for(int i=argc-1; i>=0; i--)
+	{
+		rsp -= 8;
+		*(uintptr_t *)rsp = argv_addrs[i];
+	}
+	
+	uintptr_t argv_ptr = rsp;
+
+	rsp -= 8;
+	*(uintptr_t *)rsp = 0;
+
+	if_->rsp = rsp;			//최종 스택 포인터 RSP
+	if_->R.rdi = argc;		//Main의 첫 번째 인자(RDI)
+	if_->R.rsi = argv_ptr;  //main의 두 번째 인자(RSI)
+
+	return true;
 }
 
 
@@ -204,6 +271,11 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
+	// while(1)
+	// {
+	// 	thread_yield();
+	// }
+	timer_sleep(100);
 	return -1;
 }
 
@@ -335,8 +407,14 @@ load (const char *file_name, struct intr_frame *if_) {
 		goto done;
 	process_activate (thread_current ());
 
+	char real_file_name[128];
+	strlcpy(real_file_name, file_name, 128);
+
+	char *save_ptr;
+	char *file_name_only = strtok_r(real_file_name, " ", &save_ptr);
+
 	/* Open executable file. */
-	file = filesys_open (file_name);
+	file = filesys_open (file_name_only);
 	if (file == NULL) {
 		printf ("load: %s: open failed\n", file_name);
 		goto done;
@@ -416,6 +494,8 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
+	if(!setup_user_stack(file_name, if_))
+		goto done;
 
 	success = true;
 
