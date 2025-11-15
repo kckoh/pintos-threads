@@ -42,6 +42,8 @@ void
 syscall_handler (struct intr_frame *f) {
 	// System call number is in rax
 	int syscall_num = f->R.rax;
+    struct thread *curr = thread_current();
+    uint64_t *pml4 = curr->pml4;
 
 	switch (syscall_num) {
 		case SYS_WRITE:
@@ -50,7 +52,26 @@ syscall_handler (struct intr_frame *f) {
 				const void *buffer = (void *)f->R.rsi;  // Second argument: buffer
 				unsigned size = f->R.rdx;             // Third argument: size
 
+				// Write때 구현
+                // // 1. NULL 체크
+                // if (buffer == NULL)
+                //     thread_exit();
+
+                // // 2. User 주소 범위 체크
+                // if (!is_user_vaddr(buffer) || !is_user_vaddr(buffer + size - 1))
+                //      thread_exit();
+
+                // // 3. 매핑 체크 - 시작과 끝 주소만 체크 (중간은 연속되어 있다고 가정)
+                // if (!pml4_get_page(curr->pml4, buffer))
+                //     thread_exit();
+
+                // if (size > 0 && !pml4_get_page(curr->pml4, buffer + size - 1))
+                //     thread_exit();
+
+                // 중간 페이지까지 체크를 해야되나? -> maybe optional
+
 				// For now, only handle writing to stdout (fd = 1)
+
 				if (fd == 1) {
 					putbuf(buffer, size);  // Write to console
 					f->R.rax = size;         // Return number of bytes written
