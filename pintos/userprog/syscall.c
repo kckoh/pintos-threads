@@ -70,11 +70,11 @@ syscall_handler (struct intr_frame *f) {
 			break;
 
 		case SYS_HALT:
-        {
-            power_off();
-            thread_exit();
-
-        }
+            {
+                power_off();
+                thread_exit();
+            }
+            break;
 		default:
 			printf("system call! (unimplemented syscall number: %d)\n", syscall_num);
 			thread_exit();
