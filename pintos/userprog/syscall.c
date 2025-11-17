@@ -8,9 +8,15 @@
 #include "threads/flags.h"
 #include "intrinsic.h"
 #include "include/threads/init.h"
+#include <string.h>
+#include "filesys/file.h"
+#include "threads/synch.h"
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
+static void check_sting(const char *str);
+static void check_string(const char *str);
+struct lock filesys_lock;
 
 /* System call.
  *
@@ -36,6 +42,8 @@ syscall_init (void) {
 	 * mode stack. Therefore, we masked the FLAG_FL. */
 	write_msr(MSR_SYSCALL_MASK,
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
+
+	lock_init(&filesys_lock);
 }
 
 /* The main system call interface */
@@ -45,6 +53,61 @@ syscall_handler (struct intr_frame *f) {
 	int syscall_num = f->R.rax;
 
 	switch (syscall_num) {
+		case SYS_OPEN:
+		{
+			const char *file = (const char *)f->R.rdi;
+
+			check_string(file);
+
+			if(strlen(file)==0)
+			{
+				f->R.rax = -1;
+				break;
+			}
+
+			lock_acquire(&filesys_lock);
+			struct file *opened_file = filesys_open(file);
+			lock_release(&filesys_lock);
+
+			if(opened_file != NULL)
+			{
+				struct thread *curr = thread_current();
+				
+				int fd = curr->next_fd;
+				curr->fd_table[fd] = opened_file;
+				curr->next_fd++;
+
+				f->R.rax = fd;
+				break;
+			}
+			else
+			{
+				f->R.rax = -1;
+				break;
+			}
+		}
+		break;
+
+		case SYS_CREATE:
+		{
+			const char *file = (const char *)f->R.rdi;
+			unsigned initial_size = f->R.rsi;
+
+			check_string(file);
+
+			if(strlen(file)==0)
+			{
+				f->R.rax = 0;
+				break;
+			}
+			lock_acquire(&filesys_lock);
+			bool success = filesys_create(file, initial_size);
+			lock_release(&filesys_lock);
+
+			f->R.rax = success;
+		}
+		break;
+
 		case SYS_WRITE:
 			{
 				int fd = f->R.rdi;                    // First argument: file descriptor
@@ -79,5 +142,36 @@ syscall_handler (struct intr_frame *f) {
 			printf("system call! (unimplemented syscall number: %d)\n", syscall_num);
 			thread_exit();
 			break;
+	}
+}
+
+static void
+check_string(const char *str)
+{
+	if(str==NULL)
+	{
+		thread_current()->exit_status = -1;
+		thread_exit();
+	}
+	if(!is_user_vaddr(str) || pml4_get_page(thread_current()->pml4, str)==NULL)
+	{
+		thread_current()->exit_status = -1;
+		thread_exit();
+	}
+
+	const char *ptr = str;
+	while(true)
+	{
+		if((uintptr_t)ptr % PGSIZE == 0 && ptr != str)
+		{
+			if(!is_user_vaddr(ptr) || pml4_get_page(thread_current()->pml4, ptr)==NULL)
+			{
+				thread_current()->exit_status = -1;
+				thread_exit();
+			}
+		}
+		if(*ptr=='\0')
+			break;
+		ptr++;
 	}
 }
