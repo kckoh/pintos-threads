@@ -4,10 +4,12 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/loader.h"
+#include "threads/synch.h"
 #include "userprog/gdt.h"
 #include "threads/flags.h"
 #include "intrinsic.h"
 #include "include/threads/init.h"
+#include "filesys/directory.h"
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -25,6 +27,8 @@ void syscall_handler (struct intr_frame *);
 #define MSR_LSTAR 0xc0000082        /* Long mode SYSCALL target */
 #define MSR_SYSCALL_MASK 0xc0000084 /* Mask for the eflags */
 
+static struct lock syscall_lock;
+
 void
 syscall_init (void) {
 	write_msr(MSR_STAR, ((uint64_t)SEL_UCSEG - 0x10) << 48  |
@@ -36,6 +40,27 @@ syscall_init (void) {
 	 * mode stack. Therefore, we masked the FLAG_FL. */
 	write_msr(MSR_SYSCALL_MASK,
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
+
+	lock_init(&syscall_lock);
+}
+
+void exit(int status) {
+    struct thread *cur = thread_current();
+    cur->exit_status = status;
+    thread_exit();
+}
+
+static bool is_valid_pointer(const void *ptr) {
+    // 1. NULL 포인터 체크
+    if (ptr == NULL)
+        return false;
+
+    // 2. 커널 영역 포인터 체크 (0xc0000000 이상)
+    if (!is_user_vaddr(ptr))
+        return false;
+
+
+    return true;
 }
 
 /* The main system call interface */
@@ -61,11 +86,51 @@ syscall_handler (struct intr_frame *f) {
 			}
 			break;
 
+		case SYS_CREATE:
+            {
+                char *file = f->R.rdi;
+                unsigned initial_size = f->R.rsi;
+                bool success = false;
+
+                if (!is_valid_pointer(file)|| initial_size < 0) {
+                    f->R.rax = success;
+                    exit(-1);
+                    break;
+                }
+
+                // bad pointer 처리는 page_fault에서?
+                lock_acquire(&syscall_lock);
+                success = filesys_create(file, initial_size);
+                lock_release(&syscall_lock);
+
+                f->R.rax = success;
+            }
+            break;
+
+        case SYS_REMOVE:
+           	{
+                char *file = (char *)f->R.rdi;
+                    if (!is_valid_pointer(file)) {
+                        exit(-1);
+                        break;
+                    }
+
+                    lock_acquire(&syscall_lock);
+                    bool success = filesys_remove(file);
+                    lock_release(&syscall_lock);
+
+                    f->R.rax = success;
+           	}
+            break;
+
+
+
 		case SYS_EXIT:
 			{
 				int status = f->R.rdi;  // First argument: exit status
-				thread_current()->exit_status = status;
-				thread_exit();
+				// thread_current()->exit_status = status;
+				// thread_exit();
+				exit(status);
 			}
 			break;
 

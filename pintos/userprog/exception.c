@@ -150,8 +150,14 @@ page_fault (struct intr_frame *f) {
 	/* Count page faults. */
 	page_fault_cnt++;
 
+	if (!user && !is_kernel_vaddr(fault_addr)) {
+        // 커널이 유저 영역 접근 시도 -> 유저 프로세스 종료
+        exit(-1);
+        NOT_REACHED();
+    }
+
 	if (user)
-		kill (f);	
+		kill (f);
 
 	/* If the fault is true fault, show info and exit. */
 	printf ("Page fault at %p: %s error %s page in %s context.\n",
@@ -161,4 +167,3 @@ page_fault (struct intr_frame *f) {
 			user ? "user" : "kernel");
 	kill (f);
 }
-
