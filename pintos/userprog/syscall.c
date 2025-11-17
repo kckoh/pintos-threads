@@ -19,12 +19,12 @@ void syscall_handler (struct intr_frame *);
 
 
 static void vaild_get_addr(void *addr);
-static void vaild_put_addr(void *addr);
+static void vaild_put_addr(void *addr, unsigned length);
 
 //syscall 함수화
 static bool sys_create(const char *file, unsigned initial_size);
 static bool sys_remove(const char *file);
-static int sys_open(const char *file);
+static int sys_write(int fd, void *buffer, unsigned length);
 
 static void sys_exit(int status);
 
@@ -118,31 +118,19 @@ syscall_handler (struct intr_frame *f) {
 			break;
 
 		case SYS_OPEN:
-			f->R.rax = sys_open(f->R.rdi);
+
 			break;
 
 		case SYS_FILESIZE:
-			f->R.rax = sys_filesize(f->R.rdi);
+
 			break;
 
 		case SYS_READ:
-			f->R.rax = sys_read(f->R.rdi, f->R.rsi, f->R.rdx);
+
 			break;
 
 		case SYS_WRITE:
-			{
-				int fd = f->R.rdi;                    // First argument: file descriptor
-				const void *buffer = (void *)f->R.rsi;  // Second argument: buffer
-				unsigned size = f->R.rdx;             // Third argument: size
-
-				// For now, only handle writing to stdout (fd = 1)
-				if (fd == 1) {
-					putbuf(buffer, size);  // Write to console
-					f->R.rax = size;         // Return number of bytes written
-				} else {
-					f->R.rax = -1;           // Error: unsupported fd
-				}
-			}
+			f->R.rax = sys_write(f->R.rdi, f->R.rsi, f->R.rdx);
 			break;
 
 		case SYS_SEEK:
@@ -171,13 +159,12 @@ static void vaild_get_addr(void *addr){
 		sys_exit(-1);
 }
 
-static void vaild_put_addr(void *addr, unsigned size){
+static void vaild_put_addr(void *addr, unsigned length){
 	if(is_kernel_vaddr(addr) || addr == NULL)
 		sys_exit(-1);
 	
 	/* 나중에 put_user로 구현*/
 }
-
 
 static bool sys_create(const char *file, unsigned initial_size){
 
@@ -198,47 +185,19 @@ static bool sys_remove(const char *file){
 	return success;
 }
 
-static int sys_open(const char *file){
+static int sys_write(int fd, void *buffer, unsigned length){
 
-	struct thread *curr = thread_current();
+	/* todo : buffer valid*/
 
-	vaild_get_addr(file);
-	lock_acquire(&file_lock);
-
-	struct file *open_file = filesys_open(file);
-	if (open_file == NULL)
-		return -1;
-	
-	int fd = curr->fdtable->fd_checkp;
-	while (curr->fdtable->fdt[fd] != NULL){
-		fd++;
-		if(fd > MAXNUM_FDT){
-			//sys_close(file);
-			return -1;
-		}
+	// For now, only handle writing to stdout (fd = 1)
+	if (fd == 1) {
+		putbuf(buffer, length);  // Write to console
+		return length;         // Return number of bytes written
+	} else {
+		return -1;           // Error: unsupported fd
 	}
 
-	curr->fdtable->fdt[fd] = open_file;
-	curr->fdtable->fd_checkp = fd + 1; //fd_check point 업데이트
-	lock_release(&file_lock);
-	return fd;
 }
-
-static int filesize(int fd){
-
-	struct file *file = thread_current()->fdtable->fdt[fd];
-
-	return file_length(file);
-}
-
-static int sys_read(int fd, void *buffer, unsigned size){
-
-
-
-}
-
-
-
 
 static void sys_exit(int status){
 	thread_current()->exit_status = status;

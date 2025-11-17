@@ -168,7 +168,7 @@ page_fault (struct intr_frame *f) {
 	if (user)
 		kill (f);
 
-	if (!user && handle_syscall_fault (f))
+	if (fault_addr < KERN_BASE && handle_syscall_fault (f))
         return;
 
 	/* If the fault is true fault, show info and exit. */

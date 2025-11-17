@@ -28,8 +28,6 @@ typedef int tid_t;
 #define PRI_DEFAULT 31 /* Default priority. */
 #define PRI_MAX 63	   /* Highest priority. */
 
-#define MAXNUM_FDT 128 /* fdt 배열 칸수*/
-
 /* A kernel thread or user process.
  *
  * Each thread structure is stored in its own 4 kB page.  The
@@ -104,7 +102,6 @@ struct thread
 
 	//userprog
 	int exit_status;
-	struct fdtable *fdtable;
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
@@ -119,11 +116,6 @@ struct thread
 	/* Owned by thread.c. */
 	struct intr_frame tf; /* Information for switching */
 	unsigned magic;		  /* Detects stack overflow. */
-};
-
-struct fdtable{
-	struct file **fdt;
-	int fd_checkp;
 };
 
 /* If false (default), use round-robin scheduler.
