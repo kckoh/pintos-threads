@@ -13,6 +13,7 @@
 #include "include/filesys/filesys.h"
 #include "filesys/file.h"
 #include "filesys/inode.h"
+#include "devices/input.h"
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -27,7 +28,9 @@ static bool sys_remove(const char *file);
 static int sys_write(int fd, void *buffer, unsigned length);
 static int sys_open(const char *file);
 static void sys_exit(int status);
-
+static int sys_read(int fd, void *buffer, unsigned length);
+static void sys_seek(int fd, off_t position);
+static unsigned sys_tell(int fd);
 struct lock file_lock;
 
 /* System call.
@@ -128,7 +131,8 @@ syscall_handler (struct intr_frame *f) {
 			break;
 
 		case SYS_READ:
-
+		// nt read (int fd, void *buffer, unsigned size);
+		    f->R.rax = sys_read(f->R.rdi, f->R.rsi, f->R.rdx);
 			break;
 
 		case SYS_WRITE:
@@ -136,11 +140,11 @@ syscall_handler (struct intr_frame *f) {
 			break;
 
 		case SYS_SEEK:
-
+		    sys_seek(f->R.rdi, f->R.rsi);
 			break;
 
 		case SYS_TELL:
-
+		    f->R.rax = sys_tell(f->R.rdi);
 			break;
 
 
@@ -162,10 +166,20 @@ static void valid_get_addr(void *addr){
 }
 
 static void valid_put_addr(void *addr, unsigned length){
-	if(is_kernel_vaddr(addr) || addr == NULL)
-		sys_exit(-1);
+    // 1. NULL 체크
+    if (addr == NULL)
+        sys_exit(-1);
 
-	/* 나중에 put_user로 구현*/
+        // 2. 커널 주소 체크 (시작, 중간, 끝)
+    if (is_kernel_vaddr(addr) ||
+        is_kernel_vaddr((uint8_t *)addr + length / 2) ||
+        is_kernel_vaddr((uint8_t *)addr + length - 1))
+        sys_exit(-1);
+
+        // 3. 실제로 쓰기 가능한지 테스트 (page fault 체크)
+    if (!put_user((uint8_t *)addr, 0) ||
+        !put_user((uint8_t *)addr + length - 1, 0))
+        sys_exit(-1);
 }
 
 static bool sys_create(const char *file, unsigned initial_size){
@@ -255,6 +269,107 @@ static int sys_filesize(int fd){
     lock_release(&file_lock);
 
     return size;
+}
+
+
+static int sys_read(int fd, void *buffer, unsigned length){
+
+    if (length == 0)
+        return 0;
+    // Validate fd range
+    valid_put_addr(buffer, length);
+
+    if (fd == 0) {
+        for (unsigned i = 0; i < length; i++) {
+            uint8_t c = input_getc();
+            // 쓰기 시
+            // buffer + i 주소에 c를 쓰기
+            if(!put_user((uint8_t *)buffer + i, c)){
+                return i;  // 실패시 지금까지 읽은 바이트 수 반환
+            }
+        }
+        return length;
+    }
+
+    if (fd == 1) {
+        return -1;
+    }
+
+    // Validate fd range for regular files
+    if (fd < 2 || fd >= FD_TABLE_SIZE) {
+        return -1;
+    }
+
+    struct file **fd_table = thread_current()->fd_table;
+    if (fd_table == NULL) {
+        return -1;
+    }
+
+    lock_acquire(&file_lock);
+    struct file *f = fd_table[fd];
+    if (f == NULL) {  // Double-check after acquiring lock
+        lock_release(&file_lock);
+        return -1;
+    }
+
+    int bytes_read = file_read(f, buffer, length);
+    lock_release(&file_lock);
+
+    return bytes_read;
+}
+
+
+
+static void sys_seek(int fd, off_t position){
+    // Validate fd range
+    if (fd < 2 || fd >= FD_TABLE_SIZE) {
+        sys_exit(-1);
+        return;
+    }
+
+    struct file **fd_table = thread_current()->fd_table;
+    if (fd_table == NULL) {
+        sys_exit(-1);
+        return;
+    }
+
+    lock_acquire(&file_lock);
+    struct file *f = fd_table[fd];
+    if (f == NULL) {  // Double-check after acquiring lock
+        lock_release(&file_lock);
+        sys_exit(-1);
+        return;
+    }
+
+    file_seek(f, position);
+    lock_release(&file_lock);
+}
+
+
+static unsigned sys_tell(int fd){
+
+    if (fd < 2 || fd >= FD_TABLE_SIZE) {
+        return -1;
+    }
+
+    struct file **fd_table = thread_current()->fd_table;
+
+    if (fd_table == NULL) {
+        return -1;
+    }
+
+    lock_acquire(&file_lock);
+    struct file *f = fd_table[fd];
+    if (f == NULL) {  // Double-check after acquiring lock
+        lock_release(&file_lock);
+        return -1;
+    }
+
+    unsigned res = file_tell(f);
+    lock_release(&file_lock);
+
+    return res;
+
 }
 
 static void sys_exit(int status){
