@@ -26,6 +26,8 @@ static bool sys_create(const char *file, unsigned initial_size);
 static bool sys_remove(const char *file);
 static int sys_write(int fd, void *buffer, unsigned length);
 static int sys_open(const char *file);
+static int sys_read(int fd, void *buffer, unsigned length);
+
 static void sys_exit(int status);
 
 struct lock file_lock;
@@ -128,7 +130,7 @@ syscall_handler (struct intr_frame *f) {
 			break;
 
 		case SYS_READ:
-
+			f->R.rax = sys_read(f->R.rdi, f->R.rsi, f->R.rdx);
 			break;
 
 		case SYS_WRITE:
@@ -145,6 +147,7 @@ syscall_handler (struct intr_frame *f) {
 
 
 		case SYS_CLOSE:
+			sys_close(f->R.rdi);
 			break;
 
 		default:
@@ -192,10 +195,13 @@ static int sys_write(int fd, void *buffer, unsigned length){
 	/* todo : buffer valid*/
 
 	// For now, only handle writing to stdout (fd = 1)
-	if (fd == 1) {
+	if (fd == 1) 
+	{
 		putbuf(buffer, length);  // Write to console
 		return length;         // Return number of bytes written
-	} else {
+	} 
+	else 
+	{
 		return -1;           // Error: unsupported fd
 	}
 
@@ -233,6 +239,26 @@ static int sys_open(const char *file){
     return res;
 }
 
+static void sys_close(int fd)
+{
+	//fd 범위 검증
+	if(fd<2 || fd>=FD_TABLE_SIZE)
+	{
+		return; 	//or sys_exit(-1)
+	}
+
+	struct file **fd_table = thread_current()->fd_table;
+	if(fd_table == NULL || fd_table[fd]==NULL)
+	{
+		return; 	//이미 닫혔거나 유효하지 않은 fd
+	}
+
+	lock_acquire(&file_lock);
+	file_close(fd_table[fd]);
+	fd_table[fd]=NULL;			//fd 재사용 가능
+	lock_release(&file_lock);
+}
+
 static int sys_filesize(int fd){
     // Validate fd range
     if (fd < 0 || fd >= FD_TABLE_SIZE) {
@@ -255,6 +281,73 @@ static int sys_filesize(int fd){
     lock_release(&file_lock);
 
     return size;
+}
+
+static int sys_read(int fd, void *buffer, unsigned length)
+{
+	//buffer 주소 검증
+	if(buffer == NULL || is_kernel_vaddr(buffer))
+	{
+		sys_exit(-1);
+	}
+
+	//buffer의 모든 범위가 유효한 사용자 메모리인지 확인
+	for(unsigned i=0; i<length; i++)
+	{
+		if(!put_user((uint8_t *)buffer+i, 0))
+		{
+			sys_exit(-1);
+		}
+	}
+	
+	//edge case
+	if (length == 0) 
+	{
+        return 0;
+    }
+
+	//fd 범위 검증
+	if(fd<0 || fd>=FD_TABLE_SIZE)
+	{
+		return -1;
+	}
+
+	//stdin (fd==0) 처리
+	if(fd==0)
+	{
+		unsigned i;
+		for(i=0; i<length; i++)
+		{
+			((uint8_t *)buffer)[i] = input_getc();
+		}
+		return i; //실제로 읽은 만큼만 반환
+	}
+
+	//stdout (fd==1) 거부 - 읽기 불가
+	if(fd==1)
+	{
+		return -1;
+	}
+
+	//일반 파일 처리
+	struct file **fd_table = thread_current()->fd_table;
+
+	if(fd_table==NULL)
+	{
+		return -1;
+	}
+
+	struct file *f = fd_table[fd];
+	if(f==NULL)
+	{
+		return -1;
+	}
+
+	lock_acquire(&file_lock);
+	int bytes_read = file_read(f, buffer, length);
+	lock_release(&file_lock);
+
+	return bytes_read;
 }
 
 static void sys_exit(int status){
