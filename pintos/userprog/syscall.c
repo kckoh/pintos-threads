@@ -18,8 +18,8 @@ void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
 
-static void vaild_get_addr(void *addr);
-static void vaild_put_addr(void *addr, unsigned length);
+static void valid_get_addr(void *addr);
+static void valid_put_addr(void *addr, unsigned length);
 
 //syscall 함수화
 static bool sys_create(const char *file, unsigned initial_size);
@@ -154,14 +154,14 @@ syscall_handler (struct intr_frame *f) {
 	}
 }
 
-static void vaild_get_addr(void *addr){
+static void valid_get_addr(void *addr){
 	if(is_kernel_vaddr(addr) || addr == NULL)
 		sys_exit(-1);
 	if(get_user(addr) < 0)
 		sys_exit(-1);
 }
 
-static void vaild_put_addr(void *addr, unsigned length){
+static void valid_put_addr(void *addr, unsigned length){
 	if(is_kernel_vaddr(addr) || addr == NULL)
 		sys_exit(-1);
 
@@ -170,7 +170,7 @@ static void vaild_put_addr(void *addr, unsigned length){
 
 static bool sys_create(const char *file, unsigned initial_size){
 
-	vaild_get_addr(file);
+	valid_get_addr(file);
 
 	lock_acquire(&file_lock);
 	bool success = filesys_create(file, initial_size);
@@ -179,7 +179,7 @@ static bool sys_create(const char *file, unsigned initial_size){
 }
 
 static bool sys_remove(const char *file){
-	vaild_get_addr(file);
+	valid_get_addr(file);
 
 	lock_acquire(&file_lock);
 	bool success = filesys_remove(file);
@@ -203,31 +203,34 @@ static int sys_write(int fd, void *buffer, unsigned length){
 
 // should create a new file descriptor
 static int sys_open(const char *file){
-    vaild_get_addr(file);
+    valid_get_addr(file);
 
     struct file **fd_table = thread_current()->fd_table;
-        lock_acquire(&file_lock);
-        struct file *opened_file = filesys_open(file);
-        lock_release(&file_lock);
+    lock_acquire(&file_lock);
+    struct file *opened_file = filesys_open(file);
 
-        if (opened_file == NULL) {
-            return -1;
+    if (opened_file == NULL) {
+        lock_release(&file_lock);  // ← Add this!
+        return -1;
+    }
+
+    int res = -1;
+    for (size_t i = 2; i < FD_TABLE_SIZE; i++) {
+        if(fd_table[i] == NULL){
+            fd_table[i] = opened_file;
+            res = i;
+            break;
         }
+    }
 
-
-        for (size_t i = 2; i < FD_TABLE_SIZE; i++) {
-            if(fd_table[i] == NULL){
-                fd_table[i] = opened_file;
-                return i;
-            }
-        }
-
-        // No free descriptors - close the file
-        lock_acquire(&file_lock);
+    // No free descriptors - close the file
+    if (res == -1) {
         file_close(opened_file);
-        lock_release(&file_lock);
+    }
 
-    return -1;
+    lock_release(&file_lock);
+
+    return res;
 }
 
 static int sys_filesize(int fd){
@@ -236,14 +239,18 @@ static int sys_filesize(int fd){
         return -1;
     }
 
-
-    if (thread_current()->fd_table[fd] == NULL) {
+    struct file **fd_table = thread_current()->fd_table;
+    if (fd_table == NULL || fd_table[fd] == NULL) {
         return -1;
     }
 
-    struct file *file = thread_current()->fd_table[fd];
-
     lock_acquire(&file_lock);
+    struct file *file = fd_table[fd];
+    if (file == NULL) {  // Double-check after acquiring lock
+        lock_release(&file_lock);
+        return -1;
+    }
+
     int size = file_length(file);
     lock_release(&file_lock);
 
