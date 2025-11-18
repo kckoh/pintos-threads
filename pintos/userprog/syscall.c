@@ -147,7 +147,7 @@ syscall_handler (struct intr_frame *f) {
 			break;
 
 		case SYS_CLOSE:
-			//sys_close(f->R.rdi);
+			sys_close(f->R.rdi);
 			break;
 
 		default:
