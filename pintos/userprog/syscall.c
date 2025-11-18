@@ -30,6 +30,9 @@ static int sys_read(int fd, void *buffer, unsigned length);
 static void sys_close(int fd);
 static int sys_filesize(int fd);
 
+static void sys_seek(int fd, unsigned position);
+static unsigned sys_tell(int fd);
+
 static void sys_exit(int status);
 
 struct lock file_lock;
@@ -140,11 +143,11 @@ syscall_handler (struct intr_frame *f) {
 			break;
 
 		case SYS_SEEK:
-
+			sys_seek(f->R.rdi, f->R.rsi);
 			break;
 
 		case SYS_TELL:
-
+			f->R.rax = sys_tell(f->R.rdi);
 			break;
 
 
@@ -384,6 +387,45 @@ static int sys_read(int fd, void *buffer, unsigned length)
 	lock_release(&file_lock);
 
 	return bytes_read;
+}
+
+static void sys_seek(int fd, unsigned position)
+{
+	if(fd<0 || fd>=FD_TABLE_SIZE)
+	{
+		return;
+	}
+
+	struct file *file = get_file_from_fd(fd);
+
+	if(file == NULL)
+	{
+		return;
+	}
+
+	lock_acquire(&file_lock);
+	file_seek(file, position);
+	lock_release(&file_lock);
+}
+
+static unsigned sys_tell(int fd)
+{
+	if(fd<0 || fd>=FD_TABLE_SIZE || fd<=1)
+	{
+		return -1;
+	}
+
+	struct file *file = get_user_from_fd(fd);
+	if(file==NULL)
+	{
+		return -1;
+	}
+
+	lock_acquire(&file_lock);
+	unsigned position = file_tell(file);
+	lock_release(&file_lock);
+
+	return position;
 }
 
 static void sys_exit(int status){
