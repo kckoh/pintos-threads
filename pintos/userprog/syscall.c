@@ -337,6 +337,20 @@ unsigned sys_tell(int fd){
 
 void sys_close(int fd) {
 
+	if(fd < 2 || fd > FD_TABLE_SIZE)
+		sys_exit(-1);
+ 
+	struct thread *t = thread_current();
+
+	struct file *file = t->fd_table[fd];
+	if(file == NULL)
+		sys_exit(-1);
+
+	lock_acquire(&file_lock);
+	file_close(file);
+	t->fd_table[fd] = NULL;
+	lock_release(&file_lock);
+
 }
 
 static void sys_exit(int status){
