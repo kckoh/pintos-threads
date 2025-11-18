@@ -278,17 +278,19 @@ static void check_string(const char *str)
 		sys_exit(-1);
 	}
 	const char *ptr = str;
-	while(true)
+	int count = 0;
+	while (true) 
 	{
-		if(!is_user_vaddr(ptr))
+		if(count++ > 512)
 		{
 			sys_exit(-1);
 		}
-		if(get_user((const uint8_t *)ptr)==-1)
+
+		if (get_user((const uint8_t *)ptr) == -1) 
 		{
 			sys_exit(-1);
 		}
-		if(*ptr == '\0')
+		if (*ptr == '\0') 
 		{
 			break;
 		}
