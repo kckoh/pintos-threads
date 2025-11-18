@@ -391,38 +391,37 @@ static int sys_read(int fd, void *buffer, unsigned length)
 
 static void sys_seek(int fd, unsigned position)
 {
-	if(fd<0 || fd>=FD_TABLE_SIZE)
+	if(fd<2 || fd>=FD_TABLE_SIZE)
 	{
 		return;
 	}
 
-	struct file *file = get_file_from_fd(fd);
-
-	if(file == NULL)
+	struct file **fd_table = thread_current()->fd_table;
+	if(fd_table == NULL || fd_table[fd]==NULL)
 	{
 		return;
 	}
 
 	lock_acquire(&file_lock);
-	file_seek(file, position);
+	file_seek(fd_table[fd], position);
 	lock_release(&file_lock);
 }
 
 static unsigned sys_tell(int fd)
 {
-	if(fd<0 || fd>=FD_TABLE_SIZE || fd<=1)
+	if(fd<2 || fd>=FD_TABLE_SIZE)
 	{
 		return -1;
 	}
 
-	struct file *file = get_user_from_fd(fd);
-	if(file==NULL)
+	struct file **fd_table = thread_current()->fd_table;
+	if(fd_table==NULL || fd_table[fd]==NULL)
 	{
 		return -1;
 	}
 
 	lock_acquire(&file_lock);
-	unsigned position = file_tell(file);
+	unsigned position = file_tell(fd_table[fd]);
 	lock_release(&file_lock);
 
 	return position;
