@@ -33,14 +33,12 @@ extern struct lock file_lock;
 static void
 process_init (void) {
 	struct thread *curr = thread_current ();
-
+	/* 프로세스에 필요한 구조체 여기서 만들어야함.*/
 	// initialize the fd_table
 	curr->fd_table = calloc(FD_TABLE_SIZE, sizeof(struct file *));
 	if (curr->fd_table == NULL) {
         PANIC("Failed to allocate file descriptor table");
 	}
-	/* 프로세스에 필요한 구조체 여기서 만들어야함.*/
-
 }
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
@@ -286,6 +284,8 @@ process_exit (void) {
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
+
+	/* 나중에 close구현하면 그거 호출하는 방식으로 바꾸자. lock 여기 추가하기 번거롭다.*/
 	if (curr->fd_table != NULL) {
         for (int i = 2; i < FD_TABLE_SIZE; i++) {
             if (curr->fd_table[i] != NULL) {

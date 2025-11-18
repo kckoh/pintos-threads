@@ -19,13 +19,19 @@ void syscall_handler (struct intr_frame *);
 
 
 static void valid_get_addr(void *addr);
-static void valid_put_addr(void *addr, unsigned length);
+static void valid_get_buffer(char *addr, unsigned length);
+static void valid_put_addr(char *addr, unsigned length);
 
 //syscall 함수화
 static bool sys_create(const char *file, unsigned initial_size);
 static bool sys_remove(const char *file);
-static int sys_write(int fd, void *buffer, unsigned length);
 static int sys_open(const char *file);
+static int sys_filesize(int fd);
+static int sys_read(int fd, void *buffer, unsigned length);
+static int sys_write(int fd, void *buffer, unsigned length);
+static void sys_seek(int fd, unsigned position);
+unsigned sys_tell(int fd);
+void sys_close(int fd);
 static void sys_exit(int status);
 
 struct lock file_lock;
@@ -43,9 +49,6 @@ struct lock file_lock;
 #define MSR_LSTAR 0xc0000082        /* Long mode SYSCALL target */
 #define MSR_SYSCALL_MASK 0xc0000084 /* Mask for the eflags */
 
-static int sys_filesize(int fd);
-
-/* todo : 지금 주소 저장 할지 말지*/
 static int64_t
 get_user (const uint8_t *uaddr) {
     int64_t result;
@@ -120,15 +123,15 @@ syscall_handler (struct intr_frame *f) {
 			break;
 
 		case SYS_OPEN:
-		    f->R.rax = sys_open(f->R.rdi);
+			f->R.rax = sys_open(f->R.rdi);
 			break;
 
 		case SYS_FILESIZE:
-		    f->R.rax = sys_filesize(f->R.rdi);
+			f->R.rax = sys_filesize(f->R.rdi);
 			break;
 
 		case SYS_READ:
-
+			f->R.rax = sys_read(f->R.rdi, f->R.rsi, f->R.rdx);
 			break;
 
 		case SYS_WRITE:
@@ -136,15 +139,15 @@ syscall_handler (struct intr_frame *f) {
 			break;
 
 		case SYS_SEEK:
-
+			sys_seek(f->R.rdi, f->R.rsi);
 			break;
 
 		case SYS_TELL:
-
+			f->R.rax = sys_tell(f->R.rdi);
 			break;
 
-
 		case SYS_CLOSE:
+			//sys_close(f->R.rdi);
 			break;
 
 		default:
@@ -154,18 +157,26 @@ syscall_handler (struct intr_frame *f) {
 	}
 }
 
+/* user 포인터 검사 */
 static void valid_get_addr(void *addr){
-	if(is_kernel_vaddr(addr) || addr == NULL)
-		sys_exit(-1);
 	if(get_user(addr) < 0)
 		sys_exit(-1);
 }
 
-static void valid_put_addr(void *addr, unsigned length){
-	if(is_kernel_vaddr(addr) || addr == NULL)
-		sys_exit(-1);
+/* user 버퍼 검사 */
+static void valid_get_buffer(char *addr, unsigned length){
 
-	/* 나중에 put_user로 구현*/
+	char *end = addr + length -1;
+	if(get_user(addr) < 0 || get_user(end) < 0)
+			sys_exit(-1);
+	
+}
+
+static void valid_put_addr(char *addr, unsigned length){
+
+	char *end = addr + length -1;
+	if(put_user(addr, 0) == 0 || put_user(end, 0) == 0)
+		sys_exit(-1);
 }
 
 static bool sys_create(const char *file, unsigned initial_size){
@@ -187,30 +198,15 @@ static bool sys_remove(const char *file){
 	return success;
 }
 
-static int sys_write(int fd, void *buffer, unsigned length){
-
-	/* todo : buffer valid*/
-
-	// For now, only handle writing to stdout (fd = 1)
-	if (fd == 1) {
-		putbuf(buffer, length);  // Write to console
-		return length;         // Return number of bytes written
-	} else {
-		return -1;           // Error: unsupported fd
-	}
-
-}
-
-// should create a new file descriptor
 static int sys_open(const char *file){
     valid_get_addr(file);
 
     struct file **fd_table = thread_current()->fd_table;
     lock_acquire(&file_lock);
     struct file *opened_file = filesys_open(file);
-
     if (opened_file == NULL) {
-        lock_release(&file_lock);  // ← Add this!
+		/* open 실패면 inode close, free(file) 해줌 */
+        lock_release(&file_lock); 
         return -1;
     }
 
@@ -235,26 +231,112 @@ static int sys_open(const char *file){
 
 static int sys_filesize(int fd){
     // Validate fd range
-    if (fd < 0 || fd >= FD_TABLE_SIZE) {
+    if (fd < 0 || fd >= FD_TABLE_SIZE)
         return -1;
-    }
+
 
     struct file **fd_table = thread_current()->fd_table;
-    if (fd_table == NULL) {
+    if (fd_table == NULL)
         return -1;
-    }
 
-    lock_acquire(&file_lock);
+
     struct file *f = fd_table[fd];
-    if (f == NULL) {  // Double-check after acquiring lock
-        lock_release(&file_lock);
+    if (f == NULL)
         return -1;
-    }
 
+	lock_acquire(&file_lock);
     int size = file_length(f);
     lock_release(&file_lock);
 
     return size;
+}
+
+static int sys_read(int fd, void *buffer, unsigned length){
+
+	if(length == 0)
+		return 0;
+
+	valid_put_addr(buffer, length); //써보면서 확인해야함
+	if(fd < 0 || fd > FD_TABLE_SIZE || fd == 1)
+		return -1;
+
+	if(fd == 0){
+       for (unsigned i = 0; i < length; i++) {
+            uint8_t c = input_getc();
+            // 쓰기 시
+            // buffer + i 주소에 c를 쓰기
+            if(!put_user((uint8_t *)buffer + i, c))
+                return i;  // 실패시 지금까지 읽은 바이트 수 반환
+		}
+	}
+	else{
+		/* fd에 해당하는 파일에서 length만큼 읽어서 buffer에 담음*/
+		struct file *file = thread_current()->fd_table[fd];
+		if(file == NULL){
+			return -1;
+		}
+		lock_acquire(&file_lock);
+		/* file_reat_at 필요시 변경할지도 */
+		int size = file_read(file, buffer, length);
+		lock_release(&file_lock);
+		return size;
+	}
+}
+
+static int sys_write(int fd, void *buffer, unsigned length) {
+
+	valid_get_buffer(buffer, length); //읽기(접근) 가능을 확인해야함
+	if(fd <= 0 || fd > FD_TABLE_SIZE) //0(stdin) 불가능 1~127까지 가능해야함
+		return -1;
+
+	if (fd == 1) {
+		/* stdout으로 write*/
+		putbuf(buffer, length);  // Write to console
+		return length;         // Return number of bytes written
+	} else {
+		/* file에 write*/
+		struct file *file = thread_current()->fd_table[fd];
+		if(file == NULL)
+			return -1;
+		lock_acquire(&file_lock);
+		off_t size = file_write(file, buffer, length);
+		lock_release(&file_lock);
+		return size;   
+	}
+}
+
+/* 반환값이 없으면 문제 생기면 그냥 exit 시킨다. */
+static void sys_seek(int fd, unsigned position) {
+
+	if(fd < 2 || fd > FD_TABLE_SIZE)
+		sys_exit(-1);
+
+	struct file *file = thread_current()->fd_table[fd];
+	if(file == NULL)
+		sys_exit(-1);
+
+	lock_acquire(&file_lock);
+	file_seek(file, position);
+	lock_release(&file_lock);
+}
+
+unsigned sys_tell(int fd){
+
+	if(fd < 2 || fd > FD_TABLE_SIZE)
+		return -1;
+
+	struct file *file = thread_current()->fd_table[fd];
+	if(file == NULL)
+		return -1;
+
+	lock_acquire(&file_lock);
+	unsigned size = file_tell(file);
+	lock_release(&file_lock);
+	return size;
+}
+
+void sys_close(int fd) {
+
 }
 
 static void sys_exit(int status){
