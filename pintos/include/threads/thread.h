@@ -103,6 +103,9 @@ struct thread
 	//userprog
 	int exit_status;
 
+	struct file **fd_table;     	// 파일 디스크립터 테이블
+    int next_fd;                    // 다음 할당할 fd 번호
+
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4; /* Page map level 4 */

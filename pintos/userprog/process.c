@@ -32,8 +32,16 @@ static void
 process_init (void) {
 	struct thread *curr = thread_current ();
 
-	/* 프로세스에 필요한 구조체 여기서 만들어야함.*/
+	curr->fd_table = palloc_get_page(PAL_ZERO);
+	if(curr->fd_table == NULL)
+	{
+		thread_exit();
+	}
 
+	curr->fd_table[0] = NULL;
+	curr->fd_table[1] = NULL;
+
+	curr->next_fd = 2;
 }
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
@@ -278,6 +286,20 @@ process_exit (void) {
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
+	if(curr->fd_table != NULL)
+	{
+		for(int fd = 2; fd<128; fd++)
+		{
+			if(curr->fd_table[fd] != NULL)
+			{
+				file_close(curr->fd_table[fd]);
+				curr->fd_table[fd] = NULL;
+			}
+		}
+		palloc_free_page(curr->fd_table);
+		curr->fd_table = NULL;
+	}
+
 	printf("%s: exit(%d)\n", thread_current()->name, curr->exit_status);
 	process_cleanup ();
 }

@@ -18,13 +18,18 @@ void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
 
-static void vaild_get_addr(void *addr);
-static void vaild_put_addr(void *addr, unsigned length);
+static void valid_get_addr(void *addr);
+static void valid_put_addr(void *addr, unsigned length);
+static void check_string(const char *str);
 
 //syscall 함수화
 static bool sys_create(const char *file, unsigned initial_size);
 static bool sys_remove(const char *file);
 static int sys_write(int fd, void *buffer, unsigned length);
+static int sys_open(const char *file);
+static void sys_close(int fd);
+static int sys_read(int fd, void *buffer, unsigned length);
+static int sys_filesize(int fd);
 
 static void sys_exit(int status);
 
@@ -110,27 +115,27 @@ syscall_handler (struct intr_frame *f) {
 
 
 		case SYS_CREATE:
-			f->R.rax = sys_create(f->R.rdi, f->R.rsi);
+			f->R.rax = sys_create((const char *)f->R.rdi, f->R.rsi);
 			break;
 
 		case SYS_REMOVE:
-			f->R.rax = sys_remove(f->R.rdi);
+			f->R.rax = sys_remove((const char *)f->R.rdi);
 			break;
 
 		case SYS_OPEN:
-
+			f->R.rax = sys_open((const char *)f->R.rdi);
 			break;
 
 		case SYS_FILESIZE:
-
+			f->R.rax = sys_filesize(f->R.rdi);
 			break;
 
 		case SYS_READ:
-
+			f->R.rax = sys_read(f->R.rdi, (void *)f->R.rsi, f->R.rdx);
 			break;
 
 		case SYS_WRITE:
-			f->R.rax = sys_write(f->R.rdi, f->R.rsi, f->R.rdx);
+			f->R.rax = sys_write(f->R.rdi, (const void *)f->R.rsi, f->R.rdx);
 			break;
 
 		case SYS_SEEK:
@@ -143,6 +148,7 @@ syscall_handler (struct intr_frame *f) {
 
 
 		case SYS_CLOSE:
+			sys_close(f->R.rdi);
 			break;
 
 		default:
@@ -152,23 +158,34 @@ syscall_handler (struct intr_frame *f) {
 	}
 }
 
-static void vaild_get_addr(void *addr){
+static void valid_get_addr(void *addr){
 	if(is_kernel_vaddr(addr) || addr == NULL)
 		sys_exit(-1);
 	if(get_user(addr) < 0)
 		sys_exit(-1);
 }
 
-static void vaild_put_addr(void *addr, unsigned length){
-	if(is_kernel_vaddr(addr) || addr == NULL)
+static void valid_put_addr(void *addr, unsigned length){
+	if(addr==NULL || !is_user_vaddr(addr))
 		sys_exit(-1);
-	
-	/* 나중에 put_user로 구현*/
+
+	if(length==0)
+		return;
+
+	uint8_t *end = (uint8_t *)addr + length - 1;
+
+	if(!is_user_vaddr(end))
+		sys_exit(-1);
+
+	if(get_user((uint8_t *)addr)==-1)
+		sys_exit(-1);
+
+	if(get_user(end)==-1)
+		sys_exit(-1);
 }
 
 static bool sys_create(const char *file, unsigned initial_size){
-
-	vaild_get_addr(file);
+	check_string(file); 
 
 	lock_acquire(&file_lock);
 	bool success = filesys_create(file, initial_size);
@@ -177,7 +194,7 @@ static bool sys_create(const char *file, unsigned initial_size){
 }
 
 static bool sys_remove(const char *file){
-	vaild_get_addr(file);
+	check_string(file); 
 
 	lock_acquire(&file_lock);
 	bool success = filesys_remove(file);
@@ -188,6 +205,23 @@ static bool sys_remove(const char *file){
 static int sys_write(int fd, void *buffer, unsigned length){
 
 	/* todo : buffer valid*/
+	if(buffer == NULL || !is_user_vaddr(buffer))
+    {
+        sys_exit(-1);
+    }
+
+	if(length > 0)
+    {
+        uint8_t *end = (uint8_t *)buffer + length - 1;
+        if(!is_user_vaddr(end))
+            sys_exit(-1);
+        
+        if(get_user((uint8_t *)buffer) == -1)
+            sys_exit(-1);
+        
+        if(get_user(end) == -1)
+            sys_exit(-1);
+    }
 
 	// For now, only handle writing to stdout (fd = 1)
 	if (fd == 1) {
@@ -197,6 +231,154 @@ static int sys_write(int fd, void *buffer, unsigned length){
 		return -1;           // Error: unsupported fd
 	}
 
+}
+
+static int sys_open(const char *file)
+{
+	check_string(file);
+
+	if(strlen(file)==0)
+	{
+		return -1;
+	}
+
+	struct thread *curr = thread_current();
+
+	if(curr->next_fd >= 128)
+	{
+		return -1;
+	}
+
+	lock_acquire(&file_lock);
+	struct file *opened_file = filesys_open(file);
+	lock_release(&file_lock);
+
+	if(opened_file != NULL)
+	{
+		int fd = curr->next_fd;
+		curr->fd_table[fd] = opened_file;
+		curr->next_fd++;
+
+		return fd;
+	}
+	else
+	{
+		return -1;
+	}
+}
+
+static void check_string(const char *str)
+{
+	if(str==NULL)
+	{
+		sys_exit(-1);
+	}
+	if(!is_user_vaddr(str))
+	{
+		sys_exit(-1);
+	}
+	const char *ptr = str;
+	while(true)
+	{
+		if(!is_user_vaddr(ptr))
+		{
+			sys_exit(-1);
+		}
+		if(get_user((const uint8_t *)ptr)==-1)
+		{
+			sys_exit(-1);
+		}
+		if(*ptr == '\0')
+		{
+			break;
+		}
+		ptr++;
+	}
+}
+
+static void sys_close(int fd)
+{
+	if(fd<2 || fd>=128)
+	{
+		return;
+	}
+	struct thread *curr = thread_current();
+
+	if(curr->fd_table[fd] == NULL)
+	{
+		return;
+	}
+	lock_acquire(&file_lock);
+	file_close(curr->fd_table[fd]);
+	lock_release(&file_lock);
+
+	curr->fd_table[fd]=NULL;
+}
+
+static int sys_read(int fd, void *buffer, unsigned length)
+{
+	if(buffer==NULL || !is_user_vaddr(buffer))
+	{
+		sys_exit(-1);
+	}
+
+	valid_put_addr(buffer, length);
+
+	if(length==0)
+	{
+		return 0;
+	}
+
+	if(fd==0)
+	{
+		unsigned i;
+		for (i=0; i<length; i++)
+		{
+			uint8_t c = input_getc();
+			((uint8_t *)buffer)[i] = c;
+		}
+		return i;
+	}
+	if(fd<2 || fd>=128)
+	{
+		return -1;
+	}
+
+	struct thread *curr = thread_current();
+	struct file *f = curr->fd_table[fd];
+	if(f==NULL)
+	{
+		return -1;
+	}
+	lock_acquire(&file_lock);
+	int bytes_read = file_read(f, buffer, length);
+	lock_release(&file_lock);
+
+	return bytes_read;
+}
+
+static int sys_filesize(int fd)
+{	
+	//fd 유효성 검사
+	if(fd<2 || fd>=128)
+	{
+		return -1;
+	}
+
+	//현재 스레드의 fd_table에서 파일 가져오기
+	struct thread *curr = thread_current();
+	struct file *f = curr->fd_table[fd];
+
+	if(f==NULL)
+	{
+		return -1;
+	}
+
+	lock_acquire(&file_lock);
+	int size = file_length(f);
+	lock_release(&file_lock);
+
+	return size;
 }
 
 static void sys_exit(int status){
