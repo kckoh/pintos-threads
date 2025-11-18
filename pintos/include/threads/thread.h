@@ -27,6 +27,7 @@ typedef int tid_t;
 #define PRI_MIN 0	   /* Lowest priority. */
 #define PRI_DEFAULT 31 /* Default priority. */
 #define PRI_MAX 63	   /* Highest priority. */
+#define FD_TABLE_SIZE 128
 
 #define MAXNUM_FDT 128 /* fdt 배열 칸수*/
 
@@ -107,7 +108,7 @@ struct thread
 	uint64_t *pml4; /* Page map level 4 */
 
 	int exit_status;
-	struct fdtable *fdtable;
+	struct file **fd_table;
 
 #endif
 #ifdef VM
@@ -118,12 +119,6 @@ struct thread
 	/* Owned by thread.c. */
 	struct intr_frame tf; /* Information for switching */
 	unsigned magic;		  /* Detects stack overflow. */
-};
-
-struct fdtable{
-	struct file **fdt;
-	/* fd_checkup은 open시 close시 업데이트 해야함*/
-	int fd_checkp;
 };
 
 /* If false (default), use round-robin scheduler.

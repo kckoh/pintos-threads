@@ -18,9 +18,9 @@ void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
 
-static void vaild_get_addr(void *addr);
-static void vaild_get_buffer(char *addr, unsigned length);
-static void vaild_put_addr(char *addr, unsigned length);
+static void valid_get_addr(void *addr);
+static void valid_get_buffer(char *addr, unsigned length);
+static void valid_put_addr(char *addr, unsigned length);
 
 //syscall 함수화
 static bool sys_create(const char *file, unsigned initial_size);
@@ -30,7 +30,7 @@ static int sys_filesize(int fd);
 
 static int sys_read(int fd, void *buffer, unsigned length);
 static int sys_write(int fd, void *buffer, unsigned length);
-
+static int sys_open(const char *file);
 static void sys_exit(int status);
 
 struct lock file_lock;
@@ -157,19 +157,19 @@ syscall_handler (struct intr_frame *f) {
 }
 
 
-static void vaild_get_addr(void *addr){
+static void valid_get_addr(void *addr){
 	if(get_user(addr) < 0)
 		sys_exit(-1);
 }
 
-static void vaild_get_buffer(char *addr, unsigned length){
+static void valid_get_buffer(char *addr, unsigned length){
 	for (unsigned i = 0; i < length; i++){
 		if(get_user(addr+i) < 0)
 			sys_exit(-1);
 	}
 }
 
-static void vaild_put_addr(char *addr, unsigned length){
+static void valid_put_addr(char *addr, unsigned length){
 
 	/* 나중에 put_user로 구현*/
 	for (unsigned i = 0; i < length; i++){
@@ -179,10 +179,9 @@ static void vaild_put_addr(char *addr, unsigned length){
 
 }
 
-/* file create 성공시 true*/
 static bool sys_create(const char *file, unsigned initial_size){
 
-	vaild_get_addr(file);
+	valid_get_addr(file);
 
 	lock_acquire(&file_lock);
 	bool success = filesys_create(file, initial_size);
@@ -191,7 +190,7 @@ static bool sys_create(const char *file, unsigned initial_size){
 }
 
 static bool sys_remove(const char *file){
-	vaild_get_addr(file);
+	valid_get_addr(file);
 
 	lock_acquire(&file_lock);
 	bool success = filesys_remove(file);
@@ -200,37 +199,58 @@ static bool sys_remove(const char *file){
 }
 
 static int sys_open(const char *file){
-	vaild_get_addr(file);
-	struct thread *curr = thread_current();
-	lock_acquire(&file_lock);
+    valid_get_addr(file);
 
-	struct file *open_file = filesys_open(file);
-	if (open_file == NULL){
-		lock_release(&file_lock);
-		return -1;
-	}
+    struct file **fd_table = thread_current()->fd_table;
+    lock_acquire(&file_lock);
+    struct file *opened_file = filesys_open(file);
 
-	int fd = curr->fdtable->fd_checkp;
-	while (curr->fdtable->fdt[fd] != NULL){
-		fd++;
-		if(fd > MAXNUM_FDT){
-			//sys_close(file);
-			lock_release(&file_lock);
-			return -1;
-		}
-	}
+    if (opened_file == NULL) {
+        lock_release(&file_lock); 
+        return -1;
+    }
 
-	curr->fdtable->fdt[fd] = open_file;
-	curr->fdtable->fd_checkp = fd + 1; //fd_check point 업데이트
-	lock_release(&file_lock);
-	return fd;
+    int res = -1;
+    for (size_t i = 2; i < FD_TABLE_SIZE; i++) {
+        if(fd_table[i] == NULL){
+            fd_table[i] = opened_file;
+            res = i;
+            break;
+        }
+    }
+
+    // No free descriptors - close the file
+    if (res == -1) {
+        file_close(opened_file);
+    }
+
+    lock_release(&file_lock);
+
+    return res;
 }
 
-/* 실패시 뭐 반환 이런거 없길래 일단 검증 안함*/
 static int sys_filesize(int fd){
+    // Validate fd range
+    if (fd < 0 || fd >= FD_TABLE_SIZE) {
+        return -1;
+    }
 
-	struct file *file = thread_current()->fdtable->fdt[fd];
-	return file_length(file);
+    struct file **fd_table = thread_current()->fd_table;
+    if (fd_table == NULL) {
+        return -1;
+    }
+
+    lock_acquire(&file_lock);
+    struct file *f = fd_table[fd];
+    if (f == NULL) {  // Double-check after acquiring lock
+        lock_release(&file_lock);
+        return -1;
+    }
+
+    int size = file_length(f);
+    lock_release(&file_lock);
+
+    return size;
 }
 
 
@@ -242,17 +262,14 @@ static int sys_read(int fd, void *buffer, unsigned length){
 
 	lock_acquire(&file_lock);
 
-	/* fd에서 buffer로 length만큼 복사?*/
-	/* 읽은 바이트 수 반환 : EOF면 0, 실패 시 -1*/
-	/* fd가 0이면 키보드에서 읽어라*/
-
 	if(fd == 0){
+		/* 0은 keyboard에서 읽어옴. 일단 임시*/
 		input_getc();
 		lock_release(&file_lock);
 	}
 	else{
 		/* fd에 해당하는 파일에서 length만큼 읽어서 buffer에 담음*/
-		struct file *file = thread_current()->fdtable->fdt[fd];
+		struct file *file = thread_current()->fd_table[fd];
 		if(file == NULL){
 			lock_release(&file_lock);
 			return -1;
@@ -269,15 +286,15 @@ static int sys_write(int fd, void *buffer, unsigned length) {
 	if(fd <= 0 || fd > MAXNUM_FDT) //0(stdin) 불가능 1~127까지 가능해야함
 		return -1;
 
-	// For now, only handle writing to stdout (fd = 1)
 	if (fd == 1) {
+		/* stdout으로 write*/
 		lock_acquire(&file_lock);
 		putbuf(buffer, length);  // Write to console
 		lock_release(&file_lock);
 		return length;         // Return number of bytes written
 	} else {
 		/* file에 write*/
-		struct file *file = thread_current()->fdtable->fdt[fd];
+		struct file *file = thread_current()->fd_table[fd];
 		if(file == NULL)
 			return -1;
 		lock_acquire(&file_lock);
