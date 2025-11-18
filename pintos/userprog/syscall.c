@@ -43,6 +43,8 @@ struct lock file_lock;
 #define MSR_LSTAR 0xc0000082        /* Long mode SYSCALL target */
 #define MSR_SYSCALL_MASK 0xc0000084 /* Mask for the eflags */
 
+static int sys_filesize(int fd);
+
 /* todo : 지금 주소 저장 할지 말지*/
 static int64_t
 get_user (const uint8_t *uaddr) {
@@ -122,7 +124,7 @@ syscall_handler (struct intr_frame *f) {
 			break;
 
 		case SYS_FILESIZE:
-
+		    f->R.rax = sys_filesize(f->R.rdi);
 			break;
 
 		case SYS_READ:
@@ -226,6 +228,26 @@ static int sys_open(const char *file){
         lock_release(&file_lock);
 
     return -1;
+}
+
+static int sys_filesize(int fd){
+    // Validate fd range
+    if (fd < 0 || fd >= FD_TABLE_SIZE) {
+        return -1;
+    }
+
+
+    if (thread_current()->fd_table[fd] == NULL) {
+        return -1;
+    }
+
+    struct file *file = thread_current()->fd_table[fd];
+
+    lock_acquire(&file_lock);
+    int size = file_length(file);
+    lock_release(&file_lock);
+
+    return size;
 }
 
 static void sys_exit(int status){
