@@ -27,6 +27,8 @@ static bool sys_remove(const char *file);
 static int sys_write(int fd, void *buffer, unsigned length);
 static int sys_open(const char *file);
 static int sys_read(int fd, void *buffer, unsigned length);
+static void sys_close(int fd);
+static int sys_filesize(int fd);
 
 static void sys_exit(int status);
 
@@ -193,6 +195,23 @@ static bool sys_remove(const char *file){
 static int sys_write(int fd, void *buffer, unsigned length){
 
 	/* todo : buffer valid*/
+	if(buffer == NULL || !is_user_vaddr(buffer) ||
+	!is_user_vaddr((char *)buffer + length - 1))
+	{
+		sys_exit(-1);
+	}
+
+	//실제 메모리 접근 가능한지 시작과 끝 검사
+	if(get_user((uint8_t *)buffer) == -1 ||
+	(length>0 && get_user((uint8_t *)buffer +length-1)==-1))
+	{
+		sys_exit(-1);
+	}
+	
+	if(fd<0 || fd>=128)
+	{
+		return -1;
+	}
 
 	// For now, only handle writing to stdout (fd = 1)
 	if (fd == 1) 
@@ -200,11 +219,28 @@ static int sys_write(int fd, void *buffer, unsigned length){
 		putbuf(buffer, length);  // Write to console
 		return length;         // Return number of bytes written
 	} 
-	else 
+
+	if(fd==0)
 	{
-		return -1;           // Error: unsupported fd
+		return -1;
 	}
 
+	struct thread *cur = thread_current();
+	struct file *file = NULL;
+
+	if(cur->fd_table != NULL && fd < FD_TABLE_SIZE)
+	{
+		file = cur->fd_table[fd];
+	}
+
+	if(file == NULL)
+	{
+		return -1;
+	}
+	lock_acquire(&file_lock);
+	int bytes_written = file_write(file, buffer, length);
+	lock_release(&file_lock);
+	return bytes_written;
 }
 
 // should create a new file descriptor
