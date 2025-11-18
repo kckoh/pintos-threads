@@ -283,13 +283,13 @@ static void sys_close(int fd)
 	//fd 범위 검증
 	if(fd<2 || fd>=FD_TABLE_SIZE)
 	{
-		return; 	//or sys_exit(-1)
+		sys_exit(-1);
 	}
 
 	struct file **fd_table = thread_current()->fd_table;
 	if(fd_table == NULL || fd_table[fd]==NULL)
 	{
-		return; 	//이미 닫혔거나 유효하지 않은 fd
+		sys_exit(-1);
 	}
 
 	lock_acquire(&file_lock);
@@ -393,13 +393,13 @@ static void sys_seek(int fd, unsigned position)
 {
 	if(fd<2 || fd>=FD_TABLE_SIZE)
 	{
-		return;
+		sys_exit(-1);
 	}
 
 	struct file **fd_table = thread_current()->fd_table;
 	if(fd_table == NULL || fd_table[fd]==NULL)
 	{
-		return;
+		sys_exit(-1);
 	}
 
 	lock_acquire(&file_lock);
