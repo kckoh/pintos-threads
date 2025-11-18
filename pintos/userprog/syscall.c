@@ -112,8 +112,6 @@ syscall_handler (struct intr_frame *f) {
 			sys_exit(f->R.rdi);
 			break;
 
-
-
 		case SYS_CREATE:
 			f->R.rax = sys_create(f->R.rdi, f->R.rsi);
 			break;
@@ -147,7 +145,7 @@ syscall_handler (struct intr_frame *f) {
 			break;
 
 		case SYS_CLOSE:
-			//sys_close(f->R.rdi);
+			sys_close(f->R.rdi);
 			break;
 
 		default:
@@ -169,7 +167,7 @@ static void valid_get_buffer(char *addr, unsigned length){
 	char *end = addr + length -1;
 	if(get_user(addr) < 0 || get_user(end) < 0)
 			sys_exit(-1);
-	
+
 }
 
 static void valid_put_addr(char *addr, unsigned length){
@@ -206,7 +204,7 @@ static int sys_open(const char *file){
     struct file *opened_file = filesys_open(file);
     if (opened_file == NULL) {
 		/* open 실패면 inode close, free(file) 해줌 */
-        lock_release(&file_lock); 
+        lock_release(&file_lock);
         return -1;
     }
 
@@ -301,7 +299,7 @@ static int sys_write(int fd, void *buffer, unsigned length) {
 		lock_acquire(&file_lock);
 		off_t size = file_write(file, buffer, length);
 		lock_release(&file_lock);
-		return size;   
+		return size;
 	}
 }
 
@@ -336,6 +334,22 @@ unsigned sys_tell(int fd){
 }
 
 void sys_close(int fd) {
+
+   	if(fd < 2 || fd > FD_TABLE_SIZE)
+		sys_exit(-1);
+
+    struct file **fd_table = thread_current()->fd_table;
+    if (fd_table == NULL)
+        sys_exit(-1);
+
+    struct file *f = fd_table[fd];
+	if(f == NULL)
+		sys_exit(-1);
+
+	lock_acquire(&file_lock);
+	file_close(f);
+	fd_table[fd] = NULL;
+	lock_release(&file_lock);
 
 }
 
