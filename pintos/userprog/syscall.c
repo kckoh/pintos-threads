@@ -18,14 +18,14 @@ void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
 
-static void vaild_get_addr(void *addr);
-static void vaild_put_addr(void *addr, unsigned length);
+static void valid_get_addr(void *addr);
+static void valid_put_addr(void *addr, unsigned length);
 
 //syscall 함수화
 static bool sys_create(const char *file, unsigned initial_size);
 static bool sys_remove(const char *file);
 static int sys_write(int fd, void *buffer, unsigned length);
-
+static int sys_open(const char *file);
 static void sys_exit(int status);
 
 struct lock file_lock;
@@ -42,6 +42,8 @@ struct lock file_lock;
 #define MSR_STAR 0xc0000081         /* Segment selector msr */
 #define MSR_LSTAR 0xc0000082        /* Long mode SYSCALL target */
 #define MSR_SYSCALL_MASK 0xc0000084 /* Mask for the eflags */
+
+static int sys_filesize(int fd);
 
 /* todo : 지금 주소 저장 할지 말지*/
 static int64_t
@@ -118,11 +120,11 @@ syscall_handler (struct intr_frame *f) {
 			break;
 
 		case SYS_OPEN:
-
+		    f->R.rax = sys_open(f->R.rdi);
 			break;
 
 		case SYS_FILESIZE:
-
+		    f->R.rax = sys_filesize(f->R.rdi);
 			break;
 
 		case SYS_READ:
@@ -152,23 +154,23 @@ syscall_handler (struct intr_frame *f) {
 	}
 }
 
-static void vaild_get_addr(void *addr){
+static void valid_get_addr(void *addr){
 	if(is_kernel_vaddr(addr) || addr == NULL)
 		sys_exit(-1);
 	if(get_user(addr) < 0)
 		sys_exit(-1);
 }
 
-static void vaild_put_addr(void *addr, unsigned length){
+static void valid_put_addr(void *addr, unsigned length){
 	if(is_kernel_vaddr(addr) || addr == NULL)
 		sys_exit(-1);
-	
+
 	/* 나중에 put_user로 구현*/
 }
 
 static bool sys_create(const char *file, unsigned initial_size){
 
-	vaild_get_addr(file);
+	valid_get_addr(file);
 
 	lock_acquire(&file_lock);
 	bool success = filesys_create(file, initial_size);
@@ -177,7 +179,7 @@ static bool sys_create(const char *file, unsigned initial_size){
 }
 
 static bool sys_remove(const char *file){
-	vaild_get_addr(file);
+	valid_get_addr(file);
 
 	lock_acquire(&file_lock);
 	bool success = filesys_remove(file);
@@ -197,6 +199,62 @@ static int sys_write(int fd, void *buffer, unsigned length){
 		return -1;           // Error: unsupported fd
 	}
 
+}
+
+// should create a new file descriptor
+static int sys_open(const char *file){
+    valid_get_addr(file);
+
+    struct file **fd_table = thread_current()->fd_table;
+    lock_acquire(&file_lock);
+    struct file *opened_file = filesys_open(file);
+
+    if (opened_file == NULL) {
+        lock_release(&file_lock);  // ← Add this!
+        return -1;
+    }
+
+    int res = -1;
+    for (size_t i = 2; i < FD_TABLE_SIZE; i++) {
+        if(fd_table[i] == NULL){
+            fd_table[i] = opened_file;
+            res = i;
+            break;
+        }
+    }
+
+    // No free descriptors - close the file
+    if (res == -1) {
+        file_close(opened_file);
+    }
+
+    lock_release(&file_lock);
+
+    return res;
+}
+
+static int sys_filesize(int fd){
+    // Validate fd range
+    if (fd < 0 || fd >= FD_TABLE_SIZE) {
+        return -1;
+    }
+
+    struct file **fd_table = thread_current()->fd_table;
+    if (fd_table == NULL) {
+        return -1;
+    }
+
+    lock_acquire(&file_lock);
+    struct file *f = fd_table[fd];
+    if (f == NULL) {  // Double-check after acquiring lock
+        lock_release(&file_lock);
+        return -1;
+    }
+
+    int size = file_length(f);
+    lock_release(&file_lock);
+
+    return size;
 }
 
 static void sys_exit(int status){
