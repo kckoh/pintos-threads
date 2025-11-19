@@ -8,11 +8,13 @@
 #include "threads/flags.h"
 #include "intrinsic.h"
 #include "include/threads/init.h"
-
+#include "threads/palloc.h"
 #include "threads/synch.h"
 #include "include/filesys/filesys.h"
+#include "include/lib/user/syscall.h"
 #include "filesys/file.h"
 #include "filesys/inode.h"
+#include <string.h>
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -32,6 +34,11 @@ static int sys_write(int fd, void *buffer, unsigned length);
 static void sys_seek(int fd, unsigned position);
 unsigned sys_tell(int fd);
 static void sys_close(int fd);
+static int sys_exec (const char *cmd_line);
+static int sys_wait(pid_t pid);
+static pid_t sys_fork (const char *thread_name);
+
+
 static void sys_exit(int status);
 
 struct lock file_lock;
@@ -112,8 +119,6 @@ syscall_handler (struct intr_frame *f) {
 			sys_exit(f->R.rdi);
 			break;
 
-
-
 		case SYS_CREATE:
 			f->R.rax = sys_create(f->R.rdi, f->R.rsi);
 			break;
@@ -150,6 +155,17 @@ syscall_handler (struct intr_frame *f) {
 			sys_close(f->R.rdi);
 			break;
 
+		case SYS_FORK:
+		    // sys_fork();
+			break;
+
+		case SYS_EXEC:
+		    f->R.rax = sys_exec((const char *)f->R.rdi);
+		    break;
+
+		case SYS_WAIT:
+		    break;
+
 		default:
 			printf("system call! (unimplemented syscall number: %d)\n", syscall_num);
 			thread_exit();
@@ -169,7 +185,7 @@ static void valid_get_buffer(char *addr, unsigned length){
 	char *end = addr + length -1;
 	if(get_user(addr) < 0 || get_user(end) < 0)
 			sys_exit(-1);
-	
+
 }
 
 static void valid_put_addr(char *addr, unsigned length){
@@ -206,7 +222,7 @@ static int sys_open(const char *file){
     struct file *opened_file = filesys_open(file);
     if (opened_file == NULL) {
 		/* open 실패면 inode close, free(file) 해줌 */
-        lock_release(&file_lock); 
+        lock_release(&file_lock);
         return -1;
     }
 
@@ -322,7 +338,7 @@ static int sys_write(int fd, void *buffer, unsigned length) {
 		lock_acquire(&file_lock);
 		off_t size = file_write(file, buffer, length);
 		lock_release(&file_lock);
-		return size;   
+		return size;
 	}
 }
 
@@ -354,6 +370,46 @@ unsigned sys_tell(int fd){
 	unsigned size = file_tell(file);
 	lock_release(&file_lock);
 	return size;
+}
+
+static int sys_exec(const char *cmd_line) {
+
+    //  valid_get_addr로 실제 메모리 접근 체크
+    valid_get_addr(cmd_line);
+
+    //  커널 페이지에 안전하게 복사
+    char *cmd_copy = palloc_get_page(PAL_ZERO);
+
+    if (cmd_copy == NULL) {
+        msg("palloc failed!");  // debugging message;
+        sys_exit(-1);
+    }
+
+
+    // get_user()로 안전하게 복사
+    size_t i;
+    for (i = 0; i < PGSIZE; i++) {
+        int64_t c = get_user((const uint8_t *)(cmd_line + i));
+
+        if (c < 0) {
+            palloc_free_page(cmd_copy);
+            sys_exit(-1);
+        }
+
+        cmd_copy[i] = (char)c;
+        if (c == '\0')
+            break;
+    }
+
+
+    // Null-termination
+    if (i == PGSIZE) {
+        cmd_copy[PGSIZE - 1] = '\0';
+    }
+    // process_exec()은 성공하면 리턴 안함, 실패하면 -1 리턴
+    int result = process_exec(cmd_copy);
+
+    return result;  // -1 반환
 }
 
 static void sys_exit(int status){
