@@ -296,7 +296,7 @@ static int sys_read(int fd, void *buffer, unsigned length){
 
 	valid_put_addr(buffer, length); //써보면서 확인해야함
 	if(fd < 0 || fd > FD_TABLE_SIZE || fd == 1)
-		return -1;
+		sys_exit(-1);
 
 	if(fd == 0){
        for (unsigned i = 0; i < length; i++) {
@@ -324,8 +324,9 @@ static int sys_read(int fd, void *buffer, unsigned length){
 static int sys_write(int fd, void *buffer, unsigned length) {
 
 	valid_get_buffer(buffer, length); //읽기(접근) 가능을 확인해야함
+
 	if(fd <= 0 || fd > FD_TABLE_SIZE) //0(stdin) 불가능 1~127까지 가능해야함
-		return -1;
+		sys_exit(-1);
 
 	if (fd == 1) {
 		/* stdout으로 write*/
