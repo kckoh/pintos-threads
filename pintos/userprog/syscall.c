@@ -30,6 +30,7 @@ static bool sys_remove(const char *file);
 
 static int sys_fork(const char *thread_name, struct intr_frame *f);
 static int sys_exec(const char *cmd_line);
+static int sys_wait (int pid);
 
 static int sys_open(const char *file);
 static int sys_filesize(int fd);
@@ -129,7 +130,7 @@ syscall_handler (struct intr_frame *f) {
 			break;
 
 		case SYS_WAIT:
-
+			f->R.rax = sys_wait(f->R.rdi);
 			break;
 
 		case SYS_CREATE:
@@ -198,7 +199,10 @@ static void valid_put_addr(char *addr, unsigned length){
 }
 
 static void sys_exit(int status){
-	thread_current()->exit_status = status;
+
+	struct thread *curr = thread_current();
+	curr->child_info->exit_status = status;
+	curr->exit_status = status;
 	thread_exit();
 }
 
@@ -222,6 +226,13 @@ static int sys_exec(const char *cmd_line){
 	if(process_exec (fn_copy) < 0) {
 		return -1;
 	}
+}
+
+static int sys_wait (int pid){
+
+	int exit_status = process_wait(pid);
+
+	return exit_status;
 }
 
 static bool sys_create(const char *file, unsigned initial_size){

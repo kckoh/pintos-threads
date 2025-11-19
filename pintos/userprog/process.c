@@ -23,10 +23,11 @@
 #endif
 
 #include "include/threads/synch.h"
+#include <list.h>
 
 static void process_cleanup (void);
 static bool load (const char **argv, int argc, struct intr_frame *if_);
-static void initd (void *f_name);
+static void initd (void *aux);
 static void __do_fork (void *);
 
 extern struct lock file_lock;
@@ -43,13 +44,32 @@ process_init (void) {
 	}
 }
 
+
+
+
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
  * The new thread may be scheduled (and may even exit)
  * before process_create_initd() returns. Returns the initd's
  * thread id, or TID_ERROR if the thread cannot be created.
  * Notice that THIS SHOULD BE CALLED ONCE. */
+
+struct initd{
+	char *fn_copy;
+	struct child *c;
+};
+
 tid_t
 process_create_initd (const char *file_name) {
+
+	struct thread *parent = thread_current ();
+    struct child *c = calloc (1, sizeof(struct child));
+    if (c == NULL)
+        return TID_ERROR;
+	
+    struct initd *i = calloc (1, sizeof(struct initd));
+    if (i == NULL)
+        return TID_ERROR;
+
 	char *fn_copy;
 	tid_t tid;
 
@@ -60,28 +80,47 @@ process_create_initd (const char *file_name) {
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
 
-
 	//thread에 file_name만 전달하도록
 	//이 과정은 단순 이름 전달 용도임, 보존이 의미가 없음 이미 fn_copy로 보존함
 	char* save_ptr;
 	file_name = strtok_r (file_name, " ", &save_ptr);
 
+	i->fn_copy = fn_copy;
+	i->c = c;
 	/* Create a new thread to execute FILE_NAME. */
-	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
-	if (tid == TID_ERROR)
+	tid = thread_create (file_name, PRI_DEFAULT, initd, i);
+	if (tid == TID_ERROR){
 		palloc_free_page (fn_copy);
+		free(c);
+		free(i);
+		return TID_ERROR;
+	}
+
+	// 자식(initd) 구조체 필드 채우고 main list에 등록
+	c->child_tid = tid;
+	c->exit_status = -1;
+	c->waited = false;
+	sema_init(&c->wait_sema, 0);
+	list_push_back(&parent->child_list, &c->child_elem);
+
 	return tid;
 }
 
 /* A thread function that launches first user process. */
 static void
-initd (void *f_name) {
+initd (void *aux) {
 #ifdef VM
 	supplemental_page_table_init (&thread_current ()->spt);
 #endif
 
+	/* initd 스레드의 child 구조체 생성 */
+	struct initd *i = aux;
+	struct thread *curr = thread_current();
+
+	curr->child_info = i->c;
+
 	process_init ();
-	if (process_exec (f_name) < 0)
+	if (process_exec (i->fn_copy) < 0)
 		PANIC("Fail to launch initd\n");
 	NOT_REACHED ();
 }
@@ -90,9 +129,9 @@ struct forkarg {
 	struct intr_frame *f;
 	struct thread *t;
 	struct semaphore forksema;
+	struct child *c;
 	bool success;
 };
-
 
 /* Clones the current process as `name`. Returns the new process's thread id, or
  * TID_ERROR if the thread cannot be created. */
@@ -100,24 +139,38 @@ tid_t
 process_fork (const char *name, struct intr_frame *if_) {
 
 	struct forkarg *fork = calloc(1, sizeof(struct forkarg));
+	if (fork == NULL)
+        return TID_ERROR;
+	// 자식 구조체 생성
+	struct child *c = calloc(1, sizeof(struct child));
+	if (c == NULL)
+        return TID_ERROR;
 	fork->f = if_;
 	fork->t = thread_current();
+	fork->c = c;
 	sema_init(&fork->forksema, 0); //__do_fork 결과 확인용
 
-	
-
-
-
 	/* Clone current thread to new thread.*/
-	tid_t id = thread_create (name, PRI_DEFAULT, __do_fork, fork);
-	if(id == TID_ERROR)
+	tid_t tid = thread_create (name, PRI_DEFAULT, __do_fork, fork);
+	if(tid == TID_ERROR){
+		/* 자원 해제 */
+		free(fork);
+		free(c);
 		return TID_ERROR;
+	}
+
+	// 자식 구조체 필드 채우고 부모 list에 등록
+	c->child_tid = tid;
+	c->exit_status = -1;
+	c->waited = false;
+	sema_init(&c->wait_sema, 0);
+	list_push_back(&thread_current()->child_list, &c->child_elem);
 
 	// __do_fork 결과 확인용
 	sema_down(&fork->forksema);
 
 	if(fork->success)
-		return id;
+		return tid;
 	else
 		return TID_ERROR;
 }
@@ -182,6 +235,10 @@ __do_fork (void *aux) {
 	struct intr_frame if_;
 	struct thread *parent = (struct thread *) args->t;
 	struct thread *current = thread_current ();
+
+	current->parent = parent;
+	current->child_info = args->c;
+
 	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) */
 	struct intr_frame *parent_if = args->f;
 	bool succ = true;
@@ -348,8 +405,33 @@ process_wait (tid_t child_tid UNUSED) {
 	// while (1){
     //        thread_yield();
 	// }
-	timer_sleep(100);
-	return -1;
+
+	struct thread *curr = thread_current();
+	struct child *target = NULL;
+
+	for (struct list_elem *e = list_begin(&curr->child_list); e != list_end(&curr->child_list); e = list_next(e)) 
+	{
+		struct child *c = list_entry(e, struct child, child_elem);
+		if (c->child_tid == child_tid) {
+			target = c;
+			break;
+		}
+	}
+	
+	// 이미 wait 호출한 자식이거나, 커널에 의해 강제 종료해서 exit_status 안바뀐 상태라면
+	if(target == NULL || target->waited == true)
+		return -1;
+
+	sema_down(&target->wait_sema);
+
+	int exit_status = target->exit_status;
+
+	/* todo : child free 필요 */
+	list_remove(&target->child_elem);
+	free(target);
+
+
+	return exit_status;
 }
 
 /* Exit the process. This function is called by thread_exit (). */
@@ -374,6 +456,8 @@ process_exit (void) {
 
 	printf("%s: exit(%d)\n", thread_current()->name, curr->exit_status);
 	process_cleanup ();
+	
+	sema_up(&curr->child_info->wait_sema);
 }
 
 /* Free the current process's resources. */

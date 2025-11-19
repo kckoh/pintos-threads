@@ -9,6 +9,8 @@
 #include "vm/vm.h"
 #endif
 
+#include "threads/synch.h"
+
 /* States in a thread's life cycle. */
 enum thread_status
 {
@@ -110,6 +112,7 @@ struct thread
 
 	struct list child_list;
 	struct thread *parent;
+	struct child *child_info;
 
 #endif
 #ifdef VM
@@ -126,7 +129,6 @@ struct child {
 	struct list_elem child_elem;
 	tid_t child_tid;
 	int exit_status;
-	bool exited; 
 	bool waited; 
 	struct semaphore wait_sema; 
 };
