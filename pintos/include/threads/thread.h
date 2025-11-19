@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
+#include "threads/synch.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -100,6 +101,13 @@ struct thread
 	struct list_elem donate_elem; /* 내가 donate하는 경우 주는 elem */
 	struct list donaters;		  /* 나에게 donate한 thread 확인 */
 	struct lock *waiting_lock;	  /* 내가 기다리는 lock(release시 확인용)*/
+
+	// fields needed for wait():
+    struct list children;           // List of child processes
+    struct list_elem child_elem;    // Element in parent's children list
+    struct semaphore wait_sema;     // For parent to wait on child exit
+    bool waited;                    // Has parent already waited?
+    struct thread *parent;          // Pointer to parent thread
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */

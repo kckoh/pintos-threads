@@ -36,7 +36,7 @@ unsigned sys_tell(int fd);
 static void sys_close(int fd);
 static int sys_exec (const char *cmd_line);
 static int sys_wait(pid_t pid);
-static pid_t sys_fork (const char *thread_name);
+static pid_t sys_fork (const char *thread_name, struct intr_frame *f);
 
 
 static void sys_exit(int status);
@@ -156,7 +156,7 @@ syscall_handler (struct intr_frame *f) {
 			break;
 
 		case SYS_FORK:
-		    // sys_fork();
+		    f->R.rax = sys_fork((const char *)f->R.rdi,f);
 			break;
 
 		case SYS_EXEC:
@@ -164,6 +164,7 @@ syscall_handler (struct intr_frame *f) {
 		    break;
 
 		case SYS_WAIT:
+		    f->R.rax = sys_wait(f->R.rdi);
 		    break;
 
 		default:
@@ -415,4 +416,14 @@ static int sys_exec(const char *cmd_line) {
 static void sys_exit(int status){
 	thread_current()->exit_status = status;
 	thread_exit();
+}
+
+
+static int sys_wait(pid_t pid){
+    return process_wait(pid);
+}
+
+static pid_t sys_fork (const char *thread_name, struct intr_frame *f){
+    valid_get_addr((void *)thread_name);
+    return process_fork(thread_name, f);
 }

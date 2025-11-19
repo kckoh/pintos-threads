@@ -460,6 +460,12 @@ static void init_thread(struct thread *t, const char *name, int priority)
 	t->original_priority = priority;
 	list_init(&t->donaters);
 	t->waiting_lock = NULL;
+	t->exit_status = 0;
+	// for wait
+    list_init(&t->children);
+    sema_init(&t->wait_sema, 0);
+    t->waited = false;
+    t->parent = NULL;
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
