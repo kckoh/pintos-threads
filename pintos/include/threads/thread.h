@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
+#include "threads/synch.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -101,10 +102,17 @@ struct thread
 	struct list donaters;		  /* 나에게 donate한 thread 확인 */
 	struct lock *waiting_lock;	  /* 내가 기다리는 lock(release시 확인용)*/
 
+	struct thread *parent; 
+	struct intr_frame *parent_if;     // fork 시 부모의 interrupt frame
+    struct list child_list;           // 자식 프로세스 리스트
+    struct list_elem child_elem;      // 부모의 child_list에 연결되는 elem
+    struct semaphore fork_sema;       // fork 완료 대기용
+    struct semaphore wait_sema;       // wait 대기용
+    bool fork_success;                // fork 성공 여부
+
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4; /* Page map level 4 */
-
 	int exit_status;
 	struct file **fd_table;
 

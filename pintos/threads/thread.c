@@ -233,6 +233,7 @@ void thread_block(void)
 	schedule();
 }
 
+//사용되지 않음
 bool
 cmp_thread_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
 {
@@ -259,7 +260,7 @@ void thread_unblock(struct thread *t)
 	enum intr_level old_level;
 
 	old_level = intr_disable();
-	list_insert_ordered(&ready_list, &t->elem, &priority_more, NULL);
+	list_insert_ordered(&ready_list, &t->elem, priority_more, NULL);
 	t->status = THREAD_READY;
 	if (thread_current()->priority < t->priority)
 	{
@@ -308,6 +309,21 @@ tid_t thread_tid(void)
 void thread_exit(void)
 {
 	ASSERT(!intr_context());
+
+	struct thread *curr = thread_current();
+
+	if(curr->parent != NULL) {
+		sema_up(&curr->wait_sema);
+	}
+
+	//자식들의 부모 포인터 정리
+	struct list_elem *e;
+	for(e = list_begin(&curr->child_list);
+		e != list_end(&curr->child_list);
+		e = list_next(e)) {
+			struct thread *child = list_entry(e, struct thread, child_elem);
+			child->parent = NULL;
+		}
 
 #ifdef USERPROG
 	process_exit();
@@ -460,6 +476,15 @@ static void init_thread(struct thread *t, const char *name, int priority)
 	t->original_priority = priority;
 	list_init(&t->donaters);
 	t->waiting_lock = NULL;
+
+	t->fd_table = NULL;
+	t->exit_status = 0;
+	t->parent = NULL;
+	list_init(&t->child_list);
+	sema_init(&t->fork_sema, 0);
+	sema_init(&t->wait_sema, 0);
+	t->fork_success = false;
+	t->parent_if = NULL;
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should

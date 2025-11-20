@@ -8,18 +8,20 @@
 #include "threads/flags.h"
 #include "intrinsic.h"
 #include "include/threads/init.h"
-
+#include "threads/palloc.h"
 #include "threads/synch.h"
 #include "include/filesys/filesys.h"
+#include "include/lib/user/syscall.h"
 #include "filesys/file.h"
 #include "filesys/inode.h"
+#include <string.h>
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
 
-static void valid_get_addr(void *addr);
-static void valid_get_buffer(char *addr, unsigned length);
+static void valid_get_string(const char *str);
+static void valid_get_buffer(void *addr, unsigned length);
 static void valid_put_addr(char *addr, unsigned length);
 
 //syscall 함수화
@@ -33,6 +35,10 @@ static void sys_seek(int fd, unsigned position);
 unsigned sys_tell(int fd);
 static void sys_close(int fd);
 static void sys_exit(int status);
+
+static int sys_exec(const char *cmd_line);
+static int sys_wait(pid_t pid);
+static pid_t sys_fork (const char *thread_name, struct intr_frame *f);
 
 struct lock file_lock;
 
@@ -150,6 +156,19 @@ syscall_handler (struct intr_frame *f) {
 			sys_close(f->R.rdi);
 			break;
 
+		
+		case SYS_FORK:
+			f->R.rax = sys_fork((const char *)f->R.rdi,f);
+			break;
+
+		case SYS_WAIT:
+			f->R.rax = sys_wait(f->R.rdi);
+			break;
+
+		case SYS_EXEC:
+			f->R.rax = sys_exec((const char *)f->R.rdi);
+			break;
+
 		default:
 			printf("system call! (unimplemented syscall number: %d)\n", syscall_num);
 			thread_exit();
@@ -157,31 +176,43 @@ syscall_handler (struct intr_frame *f) {
 	}
 }
 
-/* user 포인터 검사 */
-static void valid_get_addr(void *addr){
-	if(get_user(addr) < 0)
+static void valid_get_string(const char *str) {
+	if(str==NULL)
 		sys_exit(-1);
+
+	while(get_user((uint8_t *)str)>=0) {
+		if(*str == '\0')
+			return;
+		str++;
+	}
+	sys_exit(-1);
 }
 
 /* user 버퍼 검사 */
-static void valid_get_buffer(char *addr, unsigned length){
+static void valid_get_buffer(void *addr, unsigned length){
+	if(length == 0)
+		return;
 
-	char *end = addr + length -1;
-	if(get_user(addr) < 0 || get_user(end) < 0)
-			sys_exit(-1);
-	
+	const uint8_t *start = (const uint8_t *)addr;
+	const uint8_t *end = start + length - 1;
+
+	if(get_user(start) < 0 || get_user(end) < 0)
+		sys_exit(-1);
 }
 
 static void valid_put_addr(char *addr, unsigned length){
+	if(length == 0)
+		return;
 
-	char *end = addr + length -1;
-	if(put_user(addr, 0) == 0 || put_user(end, 0) == 0)
+	uint8_t *start = (uint8_t *)addr;
+    uint8_t *end = start + length - 1;
+
+	if(!put_user(start, 0) || !put_user(end, 0))
 		sys_exit(-1);
 }
 
 static bool sys_create(const char *file, unsigned initial_size){
-
-	valid_get_addr(file);
+	valid_get_string(file);
 
 	lock_acquire(&file_lock);
 	bool success = filesys_create(file, initial_size);
@@ -190,7 +221,7 @@ static bool sys_create(const char *file, unsigned initial_size){
 }
 
 static bool sys_remove(const char *file){
-	valid_get_addr(file);
+	valid_get_string(file);
 
 	lock_acquire(&file_lock);
 	bool success = filesys_remove(file);
@@ -199,7 +230,7 @@ static bool sys_remove(const char *file){
 }
 
 static int sys_open(const char *file){
-    valid_get_addr(file);
+    valid_get_string(file);
 
     struct file **fd_table = thread_current()->fd_table;
     lock_acquire(&file_lock);
@@ -277,9 +308,9 @@ static int sys_read(int fd, void *buffer, unsigned length){
 	if(length == 0)
 		return 0;
 
-	valid_put_addr(buffer, length); //써보면서 확인해야함
+	valid_put_addr(buffer, length);
 	if(fd < 0 || fd > FD_TABLE_SIZE || fd == 1)
-		return -1;
+		sys_exit(-1);
 
 	if(fd == 0){
        for (unsigned i = 0; i < length; i++) {
@@ -289,6 +320,7 @@ static int sys_read(int fd, void *buffer, unsigned length){
             if(!put_user((uint8_t *)buffer + i, c))
                 return i;  // 실패시 지금까지 읽은 바이트 수 반환
 		}
+		return length;
 	}
 	else{
 		/* fd에 해당하는 파일에서 length만큼 읽어서 buffer에 담음*/
@@ -308,7 +340,7 @@ static int sys_write(int fd, void *buffer, unsigned length) {
 
 	valid_get_buffer(buffer, length); //읽기(접근) 가능을 확인해야함
 	if(fd <= 0 || fd > FD_TABLE_SIZE) //0(stdin) 불가능 1~127까지 가능해야함
-		return -1;
+		sys_exit(-1);
 
 	if (fd == 1) {
 		/* stdout으로 write*/
@@ -358,5 +390,50 @@ unsigned sys_tell(int fd){
 
 static void sys_exit(int status){
 	thread_current()->exit_status = status;
+	printf("%s: exit(%d)\n", thread_current()->name, status);
 	thread_exit();
+}
+
+static int sys_exec(const char *cmd_line)
+{
+	valid_get_string(cmd_line);
+
+	//cmd_line을 커널 메모리로 복사
+	//(exec중에 현재 프로세스의 페이지가 해제되므로)
+	char *cmd_copy = palloc_get_page(0); 	//PAL_ZERO
+	if(cmd_copy == NULL) 
+		sys_exit(-1);
+
+	//get_user로 안전하게 복사
+	size_t i;
+	for(i=0; i<PGSIZE; i++) {
+		int64_t c = get_user((const uint8_t *)(cmd_line + i));
+
+		if(c<0) {
+			palloc_free_page(cmd_copy);
+			sys_exit(-1);
+		}
+		cmd_copy[i] = (char)c;
+		if(c=='\0')
+			break;
+	}
+
+	if(i==PGSIZE) {
+		cmd_copy[PGSIZE - 1] = '\0';
+	}
+	int result = process_exec(cmd_copy);
+	// process_exec(cmd_copy);
+	// NOT_REACHED();
+	// return -1;
+
+	return result;
+}
+
+static int sys_wait(pid_t pid) {
+	return process_wait(pid);
+}
+
+static pid_t sys_fork(const char *thread_name, struct intr_frame *f) {
+	valid_get_string(thread_name);
+	return process_fork(thread_name, f);
 }
