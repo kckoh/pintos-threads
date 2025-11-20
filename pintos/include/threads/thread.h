@@ -104,10 +104,9 @@ struct thread
 
 	// fields needed for wait():
     struct list children;           // List of child processes
-    struct list_elem child_elem;    // Element in parent's children list
-    struct semaphore wait_sema;     // For parent to wait on child exit
-    bool waited;                    // Has parent already waited?
+    struct child *child_info;       // Child info struct for parent to access
     struct thread *parent;          // Pointer to parent thread
+
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
@@ -125,6 +124,14 @@ struct thread
 	/* Owned by thread.c. */
 	struct intr_frame tf; /* Information for switching */
 	unsigned magic;		  /* Detects stack overflow. */
+};
+
+struct child {
+	struct list_elem child_elem;
+	int exit_status;
+	tid_t tid;
+	bool waited;
+	struct semaphore wait_sema;
 };
 
 /* If false (default), use round-robin scheduler.

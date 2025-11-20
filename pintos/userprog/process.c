@@ -45,10 +45,16 @@ process_init (void) {
 	// initialize the fd_table
 
 	curr->fd_table = calloc(FD_TABLE_SIZE, sizeof(struct file *));
-
-	if (curr->fd_table == NULL) {
+	curr->child_info = malloc(sizeof(struct child));
+	if (curr->fd_table == NULL || curr->child_info == NULL) {
         PANIC("Failed to allocate file descriptor table");
 	}
+
+	// Initialize child_info fields
+	curr->child_info->exit_status = 0;
+	curr->child_info->tid = curr->tid;
+	curr->child_info->waited = false;
+	sema_init(&curr->child_info->wait_sema, 0);
 }
 
 struct initd_args {
@@ -119,12 +125,18 @@ initd (void *aux) {
     /* Establish parent-child relationship so process_wait can find us */
     struct thread *curr = thread_current();
     curr->parent = parent;
-    list_push_back(&parent->children, &curr->child_elem);
+
+    process_init ();
+
+
+    list_push_back(&parent->children, &curr->child_info->child_elem);
+
 
     /* Signal parent that we've registered ourselves */
     sema_up(&args->init_sema);
 
-    process_init ();
+
+
 
     if (process_exec (f_name) < 0)
 		PANIC("Fail to launch initd\n");
@@ -248,7 +260,7 @@ __do_fork (void *aux) {
 	// Establish parent-child relationship
 	// current is the child
 	current->parent = parent;
-	list_push_back(&parent->children, &current->child_elem);
+	list_push_back(&parent->children, &current->child_info->child_elem);
 
 	for (int fd = 2; fd < FD_TABLE_SIZE; fd++) {
 	    if (parent->fd_table[fd] != NULL) {
@@ -381,57 +393,40 @@ process_wait (tid_t child_tid UNUSED) {
 	// }
 
 	// 1. Find child with matching tid in current thread's children list
-	bool found = false;
 	struct thread *cur = thread_current();
-	struct thread *child_copy;
+	struct child *child_info = NULL;
 	struct list_elem *e;
-	for (e = list_begin(&cur->children); e != list_end(&cur->children); e = list_next(e)) {
-	    struct thread *child = list_entry(e, struct thread, child_elem);
-		if (child->tid == child_tid) {
 
-			// 2. If not found → return -1 (not a child)
-			if (child->waited == true) {
+	for (e = list_begin(&cur->children); e != list_end(&cur->children); e = list_next(e)) {
+	    struct child *child = list_entry(e, struct child, child_elem);
+		if (child->tid == child_tid) {
+			// 2. If already waited → return -1
+			if (child->waited) {
 				return -1;
 			}
-			found = true;
-			child_copy = child;
+			child_info = child;
 			break;
 		}
 	}
 
     // 2. If not found → return -1 (not a child)
-    if (!found)
+    if (child_info == NULL)
         return -1;
 
-    // 3. If found but already waited → return -1 -> already handled in the for loop
+    // 3. Mark as waited
+    child_info->waited = true;
 
-    // 4. Mark as waited
-    child_copy->waited = true;
+    // 4. Wait on child's wait_sema (child will sema_up on exit)
+    sema_down(&child_info->wait_sema);
 
-    list_remove(&child_copy->child_elem);
-    // 5. Wait on child's wait_sema (child will sema_up on exit)
-    sema_down(&child_copy->wait_sema);
+    // 5. Get exit status (child has exited and stored its exit_status)
+    int exit_status = child_info->exit_status;
 
-    // 6. Get exit status
-    // printf("DEBUG: About to read exit_status from child %d\n", child_copy->tid);
+    // 6. Remove from children list and free the child_info
+    list_remove(&child_info->child_elem);
+    free(child_info);
 
-    // ADDED code
-    // enum intr_level old_level = intr_disable();
-    int exit_status = child_copy->exit_status;
-    // printf("DEBUGGING: child_elem %p\n", &child_copy->child_elem);
-    // list_remove(&child_copy->child_elem);
-    // intr_set_level(old_level);
     return exit_status;
-
-
-     // int exit_status = child_copy->exit_status;
-     // printf("DEBUG: Successfully read exit_status = %d\n", exit_status);
-    // 7. Remove child_elem from children list
-    // list_remove(&child_copy->child_elem);
-
-    // 8. Return exit status
-	// timer_sleep(100);
-	// return exit_status;
 }
 
 /* Exit the process. This function is called by thread_exit (). */
@@ -449,31 +444,32 @@ process_exit (void) {
             if (curr->fd_table[i] != NULL) {
                 lock_acquire(&file_lock);
                 file_close(curr->fd_table[i]);
+                curr->fd_table[i] = NULL;
                 lock_release(&file_lock);
             }
         }
         free(curr->fd_table);
 	}
 
-	// Signal parent if it's waiting
-	if (curr->parent != NULL) {
-		sema_up(&curr->wait_sema);
+	// Store exit status in child_info for parent to read
+	if (curr->child_info != NULL) {
+		curr->child_info->exit_status = curr->exit_status;
 	}
 
-	// Orphan all children (remove parent pointer)
-    // struct list_elem *e;
-    // for (e = list_begin(&curr->children); e != list_end(&curr->children); e = list_next(e)) {
-    //     struct thread *child = list_entry(e, struct thread, child_elem);
-    //     child->parent = NULL;  // Child is now orphaned
-    // }
+	// Signal parent if it's waiting
+	if (curr->parent != NULL && curr->child_info != NULL) {
+		sema_up(&curr->child_info->wait_sema);
+	} else if (curr->child_info != NULL) {
+      // No parent - free our own child_info
+      free(curr->child_info);
+    }
+
+	// Orphan all children - free their child_info structs if not waited
     while (!list_empty(&curr->children)) {
-          // struct list_elem *e = list_begin(&curr->children);
-          // struct thread *child = list_entry(e, struct thread, child_elem);
-          // list_remove(e);  // Remove from parent's list
-          // child->parent = NULL;  // Orphan the child
-          struct list_elem *e =  list_pop_front(&curr->children);
-          struct thread *child = list_entry(e, struct thread, child_elem);
-          child->parent = NULL;
+		struct list_elem *e = list_pop_front(&curr->children);
+		struct child *child = list_entry(e, struct child, child_elem);
+		// If the child hasn't been waited on, free its child_info
+		free(child);
     }
 
 	// printf("%s: exit(%d)\n", thread_current()->name, curr->exit_status);

@@ -463,8 +463,8 @@ static void init_thread(struct thread *t, const char *name, int priority)
 	t->exit_status = 0;
 	// for wait
     list_init(&t->children);
-    sema_init(&t->wait_sema, 0);
-    t->waited = false;
+    // sema_init(&t->wait_sema, 0);
+    // t->waited = false;
     t->parent = NULL;
 }
 
