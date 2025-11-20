@@ -211,11 +211,6 @@ tid_t thread_create(const char *name, int priority,
 	/* Add to run queue. */
 	thread_unblock(t);
 
-	// if new thread has the higher priority than the current one
-	if (t->priority > thread_current()->priority) {
-		thread_yield();
-	}
-
 	return tid;
 }
 
@@ -459,7 +454,9 @@ static void init_thread(struct thread *t, const char *name, int priority)
 	t->magic = THREAD_MAGIC;
 	t->original_priority = priority;
 	list_init(&t->donaters);
+	list_init(&t->child_list);
 	t->waiting_lock = NULL;
+	t->exit_status = -1;
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should

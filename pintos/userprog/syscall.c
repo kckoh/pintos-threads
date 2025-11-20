@@ -13,6 +13,8 @@
 #include "include/filesys/filesys.h"
 #include "filesys/file.h"
 #include "filesys/inode.h"
+#include "userprog/process.h"
+#include "include/threads/palloc.h"
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -25,14 +27,20 @@ static void valid_put_addr(char *addr, unsigned length);
 //syscall 함수화
 static bool sys_create(const char *file, unsigned initial_size);
 static bool sys_remove(const char *file);
+
+static int sys_fork(const char *thread_name, struct intr_frame *f);
+static int sys_exec(const char *cmd_line);
+static int sys_wait (int pid);
+
 static int sys_open(const char *file);
 static int sys_filesize(int fd);
 static int sys_read(int fd, void *buffer, unsigned length);
 static int sys_write(int fd, void *buffer, unsigned length);
 static void sys_seek(int fd, unsigned position);
-unsigned sys_tell(int fd);
+static unsigned sys_tell(int fd);
 static void sys_close(int fd);
 static void sys_exit(int status);
+
 
 struct lock file_lock;
 
@@ -112,7 +120,18 @@ syscall_handler (struct intr_frame *f) {
 			sys_exit(f->R.rdi);
 			break;
 
+		case SYS_FORK:
+			f->R.rax = sys_fork(f->R.rdi, f);
+			break;
 
+		case SYS_EXEC:
+			if(sys_exec(f->R.rdi) < 0)
+				sys_exit(-1);
+			break;
+
+		case SYS_WAIT:
+			f->R.rax = sys_wait(f->R.rdi);
+			break;
 
 		case SYS_CREATE:
 			f->R.rax = sys_create(f->R.rdi, f->R.rsi);
@@ -162,21 +181,58 @@ static void valid_get_addr(void *addr){
 	if(get_user(addr) < 0)
 		sys_exit(-1);
 }
+/* 버퍼에서 가져오기 검사 */
+static void valid_get_buffer(char *buffer, unsigned length){
 
-/* user 버퍼 검사 */
-static void valid_get_buffer(char *addr, unsigned length){
-
-	char *end = addr + length -1;
-	if(get_user(addr) < 0 || get_user(end) < 0)
+	char *end = buffer + length -1;
+	if(get_user(buffer) < 0 || get_user(end) < 0)
 			sys_exit(-1);
-	
+}
+/* 버퍼에 쓰기 검사 */
+static void valid_put_buffer(char *buffer, unsigned length){
+
+	char *end = buffer + length -1;
+	if(put_user(buffer, 0) == 0 || put_user(end, 0) == 0)
+		sys_exit(-1);
 }
 
-static void valid_put_addr(char *addr, unsigned length){
+static void sys_exit(int status) {
 
-	char *end = addr + length -1;
-	if(put_user(addr, 0) == 0 || put_user(end, 0) == 0)
-		sys_exit(-1);
+	struct thread *curr = thread_current();
+	curr->child_info->exit_status = status;
+	curr->exit_status = status;
+	thread_exit();
+}
+
+static int sys_fork (const char *thread_name, struct intr_frame *f){
+
+	valid_get_addr(thread_name);
+
+	return process_fork(thread_name, f);
+}
+
+// exec 성공시 리턴 없음, 실패시 -1
+static int sys_exec(const char *cmd_line){
+
+	valid_get_addr(cmd_line);
+
+	char *fn_copy = palloc_get_page(PAL_ZERO);
+	if (fn_copy == NULL)
+		return -1;
+
+	strlcpy(fn_copy, cmd_line, PGSIZE);
+
+	if(process_exec (fn_copy) < 0) {
+		/* exec에서 fn_copy free함 */
+		return -1;
+	}
+}
+
+static int sys_wait (int pid){
+
+	int exit_status = process_wait(pid);
+
+	return exit_status;
 }
 
 static bool sys_create(const char *file, unsigned initial_size){
@@ -277,7 +333,7 @@ static int sys_read(int fd, void *buffer, unsigned length){
 	if(length == 0)
 		return 0;
 
-	valid_put_addr(buffer, length); //써보면서 확인해야함
+	valid_put_buffer(buffer, length); //써보면서 확인해야함
 	if(fd < 0 || fd > FD_TABLE_SIZE || fd == 1)
 		return -1;
 
@@ -341,7 +397,7 @@ static void sys_seek(int fd, unsigned position) {
 	lock_release(&file_lock);
 }
 
-unsigned sys_tell(int fd){
+static unsigned sys_tell(int fd){
 
 	if(fd < 2 || fd > FD_TABLE_SIZE)
 		return -1;
@@ -354,9 +410,4 @@ unsigned sys_tell(int fd){
 	unsigned size = file_tell(file);
 	lock_release(&file_lock);
 	return size;
-}
-
-static void sys_exit(int status){
-	thread_current()->exit_status = status;
-	thread_exit();
 }

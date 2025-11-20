@@ -9,6 +9,8 @@
 #include "vm/vm.h"
 #endif
 
+#include "threads/synch.h"
+
 /* States in a thread's life cycle. */
 enum thread_status
 {
@@ -108,6 +110,10 @@ struct thread
 	int exit_status;
 	struct file **fd_table;
 
+	struct list child_list;
+	struct thread *parent;
+	struct child *child_info;
+
 #endif
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
@@ -117,6 +123,14 @@ struct thread
 	/* Owned by thread.c. */
 	struct intr_frame tf; /* Information for switching */
 	unsigned magic;		  /* Detects stack overflow. */
+};
+
+struct child { 
+	struct list_elem child_elem;
+	tid_t child_tid;
+	int exit_status;
+	bool waited; 
+	struct semaphore wait_sema; 
 };
 
 /* If false (default), use round-robin scheduler.
