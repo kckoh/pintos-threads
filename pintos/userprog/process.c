@@ -34,6 +34,7 @@ struct fork_args {
     struct thread *parent;
     struct intr_frame *parent_if;
     struct semaphore fork_sema;
+    bool child_success;
 };
 
 /* General process initializer for initd and other process. */
@@ -141,6 +142,7 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 	}
 	args->parent = thread_current();
 	args->parent_if = if_;
+	args->child_success = false;
 	sema_init(&args->fork_sema, 0);
 
 	tid_t tid = thread_create (name,
@@ -153,8 +155,9 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
     }
 
 	sema_down(&args->fork_sema);
-
-	free(args);
+	if (!args->child_success)
+	    return TID_ERROR;
+		free(args);
 	return tid;
 }
 
@@ -235,7 +238,6 @@ __do_fork (void *aux) {
 		goto error;
 #endif
 
-
 	process_init ();
 	/* TODO: Your code goes here.
 	 * TODO: Hint) To duplicate the file object, use `file_duplicate`
@@ -256,6 +258,7 @@ __do_fork (void *aux) {
 
             if (current->fd_table[fd] == NULL) {
                 succ = false;
+                // by default, it's false;args->child_success = false;
                 goto error;  // process_exit() will clean up
             }
 		}
@@ -263,6 +266,8 @@ __do_fork (void *aux) {
 
 	// child thread should return 0
 	if_.R.rax = 0;
+	// set the child_sccess true
+	args->child_success = true;
 
 	sema_up(&args->fork_sema);
 	/* Finally, switch to the newly created process. */
@@ -471,7 +476,7 @@ process_exit (void) {
           child->parent = NULL;
     }
 
-	printf("%s: exit(%d)\n", thread_current()->name, curr->exit_status);
+	// printf("%s: exit(%d)\n", thread_current()->name, curr->exit_status);
 	process_cleanup ();
 }
 

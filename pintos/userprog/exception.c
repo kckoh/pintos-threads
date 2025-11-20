@@ -88,6 +88,7 @@ kill (struct intr_frame *f) {
 			// intr_dump_frame (f);
 			// thread_exit ();
 			thread_current()->exit_status = -1;
+			printf("%s: exit(%d)\n", thread_current()->name, -1);
 			thread_exit();
 
 		case SEL_KCSEG:
@@ -115,8 +116,8 @@ handle_syscall_fault (struct intr_frame *f) {
     if (f->R.rax == 0)
         return false;
 	//printf("done_주소임 : %d \n", f->R.rax);
-    f->rip = f->R.rax;     
-    f->R.rax = -1;        
+    f->rip = f->R.rax;
+    f->R.rax = -1;
     return true;
 }
 
@@ -160,7 +161,7 @@ page_fault (struct intr_frame *f) {
 	if (vm_try_handle_fault (f, fault_addr, user, write, not_present))
 		return;
 #endif
-	
+
 	/* Count page faults. */
 	page_fault_cnt++;
 
@@ -180,4 +181,3 @@ page_fault (struct intr_frame *f) {
 			user ? "user" : "kernel");
 	kill (f);
 }
-
