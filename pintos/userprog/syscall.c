@@ -198,7 +198,7 @@ static void valid_put_addr(char *addr, unsigned length){
 		sys_exit(-1);
 }
 
-static void sys_exit(int status){
+static void sys_exit(int status) {
 
 	struct thread *curr = thread_current();
 	curr->child_info->exit_status = status;
@@ -213,6 +213,7 @@ static int sys_fork (const char *thread_name, struct intr_frame *f){
 	return process_fork(thread_name, f);
 }
 
+// exec 성공시 리턴 없음, 실패시 -1
 static int sys_exec(const char *cmd_line){
 
 	valid_get_addr(cmd_line);
@@ -224,6 +225,7 @@ static int sys_exec(const char *cmd_line){
 	strlcpy(fn_copy, cmd_line, PGSIZE);
 
 	if(process_exec (fn_copy) < 0) {
+		/* exec에서 fn_copy free함 */
 		return -1;
 	}
 }

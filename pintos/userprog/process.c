@@ -44,9 +44,6 @@ process_init (void) {
 	}
 }
 
-
-
-
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
  * The new thread may be scheduled (and may even exit)
  * before process_create_initd() returns. Returns the initd's
@@ -67,8 +64,10 @@ process_create_initd (const char *file_name) {
         return TID_ERROR;
 	
     struct initd *i = calloc (1, sizeof(struct initd));
-    if (i == NULL)
-        return TID_ERROR;
+    if (i == NULL){
+		free(c);
+		return TID_ERROR;
+	}
 
 	char *fn_copy;
 	tid_t tid;
@@ -76,8 +75,11 @@ process_create_initd (const char *file_name) {
 	/* Make a copy of FILE_NAME.
 	 * Otherwise there's a race between the caller and load(). */
 	fn_copy = palloc_get_page (0);
-	if (fn_copy == NULL)
+	if (fn_copy == NULL){
+		free(c);
+		free(i);
 		return TID_ERROR;
+	}
 	strlcpy (fn_copy, file_name, PGSIZE);
 
 	//thread에 file_name만 전달하도록
@@ -115,12 +117,13 @@ initd (void *aux) {
 
 	/* initd 스레드의 child 구조체 생성 */
 	struct initd *i = aux;
-	struct thread *curr = thread_current();
-
-	curr->child_info = i->c;
+    struct child *child = i->c;
+    char *file_name = i->fn_copy;
+    free(i);	// aux로 전달된 구조체 free
+	thread_current()->child_info = child;
 
 	process_init ();
-	if (process_exec (i->fn_copy) < 0)
+	if (process_exec (file_name) < 0)
 		PANIC("Fail to launch initd\n");
 	NOT_REACHED ();
 }
@@ -143,8 +146,10 @@ process_fork (const char *name, struct intr_frame *if_) {
         return TID_ERROR;
 	// 자식 구조체 생성
 	struct child *c = calloc(1, sizeof(struct child));
-	if (c == NULL)
-        return TID_ERROR;
+	if (c == NULL){
+		free(fork);
+		return TID_ERROR;
+	}
 	fork->f = if_;
 	fork->t = thread_current();
 	fork->c = c;
@@ -169,10 +174,14 @@ process_fork (const char *name, struct intr_frame *if_) {
 	// __do_fork 결과 확인용
 	sema_down(&fork->forksema);
 
-	if(fork->success)
+	if(fork->success){
+		free(fork);
 		return tid;
-	else
+	}
+	else{
+		free(fork);
 		return TID_ERROR;
+	}
 }
 
 #ifndef VM
@@ -218,6 +227,7 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 	 *    permission. */
 	writable = is_writable(pte);
 	if (!pml4_set_page (current->pml4, va, newpage, writable)) {
+		palloc_free_page(newpage);
 		return false;
 		/* 6. TODO: if fail to insert page, do error handling. */
 	}
@@ -402,9 +412,6 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
-	// while (1){
-    //        thread_yield();
-	// }
 
 	struct thread *curr = thread_current();
 	struct child *target = NULL;
@@ -418,18 +425,17 @@ process_wait (tid_t child_tid UNUSED) {
 		}
 	}
 	
-	// 이미 wait 호출한 자식이거나, 커널에 의해 강제 종료해서 exit_status 안바뀐 상태라면
+	// 자식이 아니거나, 이미 wait 호출한 자식이면
 	if(target == NULL || target->waited == true)
 		return -1;
 
 	sema_down(&target->wait_sema);
 
-	int exit_status = target->exit_status;
+	int exit_status = target->exit_status;	//커널에 의해 강제 종료된 경우는 -1이 들어있음
 
-	/* todo : child free 필요 */
+	/* child 구조체 free */
 	list_remove(&target->child_elem);
 	free(target);
-
 
 	return exit_status;
 }
@@ -443,6 +449,7 @@ process_exit (void) {
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
 
+	/* fdt 초기화 */
 	if (curr->fd_table != NULL) {
         for (int i = 2; i < FD_TABLE_SIZE; i++) {
             if (curr->fd_table[i] != NULL) {
