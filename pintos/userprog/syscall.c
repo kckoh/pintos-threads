@@ -181,20 +181,18 @@ static void valid_get_addr(void *addr){
 	if(get_user(addr) < 0)
 		sys_exit(-1);
 }
+/* 버퍼에서 가져오기 검사 */
+static void valid_get_buffer(char *buffer, unsigned length){
 
-/* user 버퍼 검사 */
-static void valid_get_buffer(char *addr, unsigned length){
-
-	char *end = addr + length -1;
-	if(get_user(addr) < 0 || get_user(end) < 0)
+	char *end = buffer + length -1;
+	if(get_user(buffer) < 0 || get_user(end) < 0)
 			sys_exit(-1);
-	
 }
+/* 버퍼에 쓰기 검사 */
+static void valid_put_buffer(char *buffer, unsigned length){
 
-static void valid_put_addr(char *addr, unsigned length){
-
-	char *end = addr + length -1;
-	if(put_user(addr, 0) == 0 || put_user(end, 0) == 0)
+	char *end = buffer + length -1;
+	if(put_user(buffer, 0) == 0 || put_user(end, 0) == 0)
 		sys_exit(-1);
 }
 
@@ -335,7 +333,7 @@ static int sys_read(int fd, void *buffer, unsigned length){
 	if(length == 0)
 		return 0;
 
-	valid_put_addr(buffer, length); //써보면서 확인해야함
+	valid_put_buffer(buffer, length); //써보면서 확인해야함
 	if(fd < 0 || fd > FD_TABLE_SIZE || fd == 1)
 		return -1;
 

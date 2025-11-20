@@ -90,6 +90,7 @@ process_create_initd (const char *file_name) {
 	/* initd 인자 전달 세팅 */
 	initd_arg->fn_copy = fn_copy;
 	initd_arg->c = c;
+
 	sema_init(&c->wait_sema, 0);	// 먼저 sema_init 해야함!! 
 
 	/* Create a new thread to execute FILE_NAME. */
@@ -101,7 +102,7 @@ process_create_initd (const char *file_name) {
 		return TID_ERROR;
 	}
 
-	// 자식(initd) 구조체 필드 채우고 main list에 등록
+	// 자식(initd) 구조체 필드 채우고 부모(main) list에 등록
 	c->child_tid = tid;
 	c->exit_status = -1;
 	c->waited = false;
@@ -158,6 +159,7 @@ process_fork (const char *name, struct intr_frame *if_) {
 	fork->t = thread_current();
 	fork->c = c;
 	sema_init(&fork->forksema, 0); //__do_fork 결과 확인용
+	sema_init(&c->wait_sema, 0); // create전에 init 해야함
 
 	/* Clone current thread to new thread.*/
 	tid_t tid = thread_create (name, PRI_DEFAULT, __do_fork, fork);
@@ -172,7 +174,6 @@ process_fork (const char *name, struct intr_frame *if_) {
 	c->child_tid = tid;
 	c->exit_status = -1;
 	c->waited = false;
-	sema_init(&c->wait_sema, 0);
 	list_push_back(&thread_current()->child_list, &c->child_elem);
 
 	// __do_fork 결과 확인용
@@ -297,7 +298,7 @@ __do_fork (void *aux) {
 		if (dup == NULL)
 			goto error;	//반환하면 안됨
 
-		current->fd_table[i] = dup;
+		current->fd_table[i] = dup; //dup한거 채우기
 	}
 
 	/* Finally, switch to the newly created process. */
@@ -433,6 +434,7 @@ process_wait (tid_t child_tid UNUSED) {
 	if(target == NULL || target->waited == true)
 		return -1;
 
+	target->waited == true;
 	sema_down(&target->wait_sema);
 
 	int exit_status = target->exit_status;	//커널에 의해 강제 종료된 경우는 -1이 들어있음
@@ -468,7 +470,7 @@ process_exit (void) {
 	process_cleanup ();
 
 	/* child_info 없으면 그냥 exit하면 됨 */
-	if (curr->child_info != NULL){
+	if (curr->child_info){
 		printf("%s: exit(%d)\n", thread_current()->name, curr->exit_status);
 		sema_up(&curr->child_info->wait_sema);
 	}
