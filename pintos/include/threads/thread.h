@@ -109,6 +109,7 @@ struct thread
 
 	int exit_status;
 	struct file **fd_table;
+	struct file *running;
 
 	struct list child_list;
 	struct thread *parent;
