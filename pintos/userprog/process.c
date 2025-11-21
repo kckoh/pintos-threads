@@ -252,7 +252,6 @@ __do_fork (void *aux) {
 	struct thread *parent = (struct thread *) args->t;
 	struct thread *current = thread_current ();
 
-	//current->parent = parent;
 	current->child_info = args->c;
 
 	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) */

@@ -125,9 +125,6 @@ struct thread
 	unsigned magic;		  /* Detects stack overflow. */
 };
 
-
-
-
 struct child { 
 	struct list_elem child_elem;
 	tid_t child_tid;
