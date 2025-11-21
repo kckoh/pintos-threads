@@ -111,7 +111,6 @@ struct thread
 	struct file **fd_table;
 
 	struct list child_list;
-	struct thread *parent;
 	struct child *child_info;
 	struct file *running;
 
@@ -125,6 +124,9 @@ struct thread
 	struct intr_frame tf; /* Information for switching */
 	unsigned magic;		  /* Detects stack overflow. */
 };
+
+
+
 
 struct child { 
 	struct list_elem child_elem;
