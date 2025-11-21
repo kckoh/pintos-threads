@@ -42,6 +42,9 @@ process_init (void) {
 	if (curr->fd_table == NULL) {
         PANIC("Failed to allocate file descriptor table");
 	}
+
+	curr->fd_table[0] = (struct file *)1;	//stdin marker
+	curr->fd_table[1] = (struct file *)2;	//stdout marker
 }
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
@@ -455,13 +458,21 @@ process_exit (void) {
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
 
+	if(curr->running != NULL) {
+		lock_acquire(&file_lock);
+		file_close(curr->running);
+		lock_release(&file_lock);
+	}
+
 	/* fdt 초기화 */
 	if (curr->fd_table != NULL) {
         for (int i = 2; i < FD_TABLE_SIZE; i++) {
             if (curr->fd_table[i] != NULL) {
-                lock_acquire(&file_lock);
-                file_close(curr->fd_table[i]);
-                lock_release(&file_lock);
+				if(curr->fd_table[i] != (struct file *)1 && curr->fd_table[i] != (struct file *)2){
+					lock_acquire(&file_lock);
+					file_close(curr->fd_table[i]);
+					lock_release(&file_lock);
+				}
             }
         }
         free(curr->fd_table);
@@ -682,7 +693,12 @@ load (const char **argv, int argc, struct intr_frame *if_) {
 
 done:
 	/* We arrive here whether the load is successful or not. */
-	file_close (file);
+	if(success) {
+		thread_current()->running = file;
+		file_deny_write(file);
+	} else {
+		file_close(file);
+	}
 	return success;
 }
 

@@ -16,6 +16,7 @@
 #include "userprog/process.h"
 #include "include/threads/palloc.h"
 
+
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
@@ -40,6 +41,7 @@ static void sys_seek(int fd, unsigned position);
 static unsigned sys_tell(int fd);
 static void sys_close(int fd);
 static void sys_exit(int status);
+static void pos_update(struct file *file);
 
 
 struct lock file_lock;
@@ -288,7 +290,7 @@ static int sys_open(const char *file){
 static void sys_close(int fd)
 {
 	//fd 범위 검증
-	if(fd<2 || fd>=FD_TABLE_SIZE)
+	if(fd<0 || fd>=FD_TABLE_SIZE)
 	{
 		sys_exit(-1);
 	}
@@ -297,6 +299,11 @@ static void sys_close(int fd)
 	if(fd_table == NULL || fd_table[fd]==NULL)
 	{
 		sys_exit(-1);
+	}
+
+	if(fd_table[fd] == (struct file *)1 || fd_table[fd] == (struct file *)2) {
+		fd_table[fd] = NULL;
+		return;
 	}
 
 	lock_acquire(&file_lock);
@@ -334,10 +341,13 @@ static int sys_read(int fd, void *buffer, unsigned length){
 		return 0;
 
 	valid_put_buffer(buffer, length); //써보면서 확인해야함
+
+	struct thread *curr = thread_current();
+
 	if(fd < 0 || fd > FD_TABLE_SIZE || fd == 1)
 		return -1;
 
-	if(fd == 0){
+	if(fd == 0 || curr->fd_table[fd] == (struct file *)1) {
        for (unsigned i = 0; i < length; i++) {
             uint8_t c = input_getc();
             // 쓰기 시
@@ -345,41 +355,56 @@ static int sys_read(int fd, void *buffer, unsigned length){
             if(!put_user((uint8_t *)buffer + i, c))
                 return i;  // 실패시 지금까지 읽은 바이트 수 반환
 		}
+		return length;
 	}
-	else{
-		/* fd에 해당하는 파일에서 length만큼 읽어서 buffer에 담음*/
-		struct file *file = thread_current()->fd_table[fd];
-		if(file == NULL){
-			return -1;
-		}
-		lock_acquire(&file_lock);
-		/* file_reat_at 필요시 변경할지도 */
-		int size = file_read(file, buffer, length);
-		lock_release(&file_lock);
-		return size;
+	if(fd==1 || curr->fd_table[fd] == (struct file *)2) {
+		return -1;
 	}
+	struct file *file = curr->fd_table[fd];
+	if(file == NULL) {
+		return -1;
+	}
+
+	lock_acquire(&file_lock);
+	int size = file_read(file, buffer, length);
+	pos_update(file);
+	lock_release(&file_lock);
+
+	return size;
 }
 
 static int sys_write(int fd, void *buffer, unsigned length) {
 
 	valid_get_buffer(buffer, length); //읽기(접근) 가능을 확인해야함
-	if(fd <= 0 || fd > FD_TABLE_SIZE) //0(stdin) 불가능 1~127까지 가능해야함
+
+	struct thread *curr = thread_current();
+
+	if(fd < 0 || fd >= FD_TABLE_SIZE) //0(stdin) 불가능 1~127까지 가능해야함
 		return -1;
 
-	if (fd == 1) {
+	//stdin에 쓰기 시도
+	if(fd == 0 || curr->fd_table[fd] == (struct file *)1) {
+		return 0;
+	}
+
+	//stdout 처리
+	if (fd == 0 || curr->fd_table[fd] == (struct file *)2) {
 		/* stdout으로 write*/
 		putbuf(buffer, length);  // Write to console
 		return length;         // Return number of bytes written
-	} else {
-		/* file에 write*/
-		struct file *file = thread_current()->fd_table[fd];
-		if(file == NULL)
-			return -1;
-		lock_acquire(&file_lock);
-		off_t size = file_write(file, buffer, length);
-		lock_release(&file_lock);
-		return size;   
-	}
+	} 
+
+	//일반 파일 쓰기
+	struct file *file = curr->fd_table[fd];
+	if(file == NULL)
+		return -1;
+
+	lock_acquire(&file_lock);
+	off_t size = file_write(file, buffer, length);
+	pos_update(file);
+	lock_release(&file_lock);
+
+	return size;
 }
 
 /* 반환값이 없으면 문제 생기면 그냥 exit 시킨다. */
@@ -394,6 +419,7 @@ static void sys_seek(int fd, unsigned position) {
 
 	lock_acquire(&file_lock);
 	file_seek(file, position);
+	pos_update(file);
 	lock_release(&file_lock);
 }
 
@@ -410,4 +436,62 @@ static unsigned sys_tell(int fd){
 	unsigned size = file_tell(file);
 	lock_release(&file_lock);
 	return size;
+}
+
+int dup2(int oldfd, int newfd) {
+	struct thread *curr = thread_current();
+
+	if(oldfd<0 || oldfd >= FD_TABLE_SIZE || newfd<0 || newfd >= FD_TABLE_SIZE) {
+		return -1;
+	}
+	struct file *old_file = curr->fd_table[oldfd];
+
+	//oldfd가 유효한 파일을 가리키지 않으면 실패
+	if(old_file == NULL) {
+		return -1;
+	}
+
+	//oldfd와 newfd가 같으면 그냥 반환
+	if(oldfd == newfd) {
+		return newfd;
+	}
+
+	//newfd가 이미 열려있으면 먼저 닫기
+	if(curr->fd_table[newfd] != NULL) {
+		sys_close(newfd);
+	}
+
+	if(old_file == (struct file *)1 || old_file == (struct file *)2) {
+		curr->fd_table[newfd] = old_file;
+	} else {
+		lock_acquire(&file_lock);
+		curr->fd_table[newfd] = file_duplicate(old_file);
+		lock_release(&file_lock);
+
+		if(curr->fd_table[newfd] == NULL) {
+			return -1;
+		}
+	}
+	return newfd;
+}
+
+static void pos_update(struct file *file) {
+    if (file == NULL)
+        return;
+
+    struct thread *t = thread_current();
+    off_t pos = file_tell(file); /* 현재 기준 파일의 오프셋 */
+
+    for (int i = 0; i < FD_TABLE_SIZE; i++) {
+        struct file *f = t->fd_table[i];
+
+        /* 비어있거나 stdin/stdout 마커는 건너뛴다 */
+        if (f == NULL || f == (struct file *)1 || f == (struct file *)2)
+            continue;
+
+        /* 같은 파일(같은 inode)이면 오프셋 동기화 */
+        if (file_get_inode(f) == file_get_inode(file)) {
+            file_seek(f, pos);
+        }
+    }
 }
