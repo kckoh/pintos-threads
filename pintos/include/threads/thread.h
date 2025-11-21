@@ -113,6 +113,7 @@ struct thread
 	struct list child_list;
 	struct thread *parent;
 	struct child *child_info;
+	struct file *running;
 
 #endif
 #ifdef VM

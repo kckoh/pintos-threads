@@ -288,13 +288,13 @@ static int sys_open(const char *file){
 static void sys_close(int fd)
 {
 	//fd 범위 검증
-	if(fd<2 || fd>=FD_TABLE_SIZE)
+	if(fd < 2 || fd >= FD_TABLE_SIZE)
 	{
 		sys_exit(-1);
-	}
+	}	
 
 	struct file **fd_table = thread_current()->fd_table;
-	if(fd_table == NULL || fd_table[fd]==NULL)
+	if(fd_table == NULL || fd_table[fd] == NULL)
 	{
 		sys_exit(-1);
 	}
@@ -375,6 +375,7 @@ static int sys_write(int fd, void *buffer, unsigned length) {
 		struct file *file = thread_current()->fd_table[fd];
 		if(file == NULL)
 			return -1;
+
 		lock_acquire(&file_lock);
 		off_t size = file_write(file, buffer, length);
 		lock_release(&file_lock);

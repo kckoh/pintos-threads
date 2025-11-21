@@ -42,6 +42,7 @@ process_init (void) {
 	if (curr->fd_table == NULL) {
         PANIC("Failed to allocate file descriptor table");
 	}
+
 }
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
@@ -434,7 +435,7 @@ process_wait (tid_t child_tid UNUSED) {
 	if(target == NULL || target->waited == true)
 		return -1;
 
-	target->waited == true;
+	target->waited = true;
 	sema_down(&target->wait_sema);
 
 	int exit_status = target->exit_status;	//커널에 의해 강제 종료된 경우는 -1이 들어있음
@@ -466,6 +467,8 @@ process_exit (void) {
         }
         free(curr->fd_table);
 	}
+
+	file_allow_write(curr->running);
 
 	process_cleanup ();
 
@@ -595,7 +598,6 @@ load (const char **argv, int argc, struct intr_frame *if_) {
 
 	/* Open executable file. */
 	file = filesys_open (argv[0]);
-
 	if (file == NULL) {
 		printf ("load: %s: open failed\n", argv[0]);
 		goto done;
@@ -679,6 +681,9 @@ load (const char **argv, int argc, struct intr_frame *if_) {
 
 
 	success = true;
+
+	file_deny_write(file);
+	t->running = file;
 
 done:
 	/* We arrive here whether the load is successful or not. */

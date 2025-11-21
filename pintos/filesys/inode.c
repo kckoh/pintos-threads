@@ -311,3 +311,9 @@ off_t
 inode_length (const struct inode *inode) {
 	return inode->data.length;
 }
+
+int 
+inode_check_deny_cnt(const struct inode *inode) {
+	return inode->deny_write_cnt;
+}
+
