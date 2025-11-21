@@ -159,15 +159,3 @@ file_tell (struct file *file) {
 	ASSERT (file != NULL);
 	return file->pos;
 }
-
-/* file이 쓰기 금지면 true */
-bool 
-file_check_deny_write (struct file *file) {
-	
-	ASSERT (file != NULL);
-
-	struct inode *inode = file_get_inode(file);
-	int deny_write_cnt = inode_check_deny_cnt(inode);
-
-	return deny_write_cnt == 0 ? false : true;
-}

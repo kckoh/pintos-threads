@@ -468,9 +468,12 @@ process_exit (void) {
         free(curr->fd_table);
 	}
 
-	file_allow_write(curr->running);
-
 	process_cleanup ();
+
+	if(curr->running){
+		file_allow_write(curr->running);
+		free(curr->running);
+	}
 
 	/* child_info 없으면 그냥 exit하면 됨 */
 	if (curr->child_info){
@@ -687,7 +690,8 @@ load (const char **argv, int argc, struct intr_frame *if_) {
 
 done:
 	/* We arrive here whether the load is successful or not. */
-	file_close (file);
+	if(!success)
+		file_close (file);
 	return success;
 }
 
