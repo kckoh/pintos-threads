@@ -38,10 +38,31 @@ process_init (void) {
 	struct thread *curr = thread_current ();
 	/* 프로세스에 필요한 구조체 여기서 만들어야함.*/
 	// initialize the fd_table
-	curr->fd_table = calloc(FD_TABLE_SIZE, sizeof(struct file *));
-	if (curr->fd_table == NULL) {
+
+	/* fdt_entry 128칸 초기화 하기 */
+	curr->fdt_entry = calloc(FD_TABLE_SIZE, sizeof(struct fdt_entry*));
+	if (curr->fdt_entry == NULL)
         PANIC("Failed to allocate file descriptor table");
+	
+	/* fdt_entry[0] 세팅 */
+	struct fdt_entry *fdt_entry0 = calloc(1, sizeof(struct fdt_entry));
+	if(fdt_entry0 == NULL){
+		free(curr->fdt_entry);
+		PANIC("Failed to allocate fdt[0]");
 	}
+	curr->fdt_entry[0] = fdt_entry0;
+	curr->fdt_entry[0]->type = STDIN;
+
+	/* fdt_entry[1] 세팅 */
+	struct fdt_entry *fdt_entry1 = calloc(1, sizeof(struct fdt_entry));
+	if(fdt_entry1 == NULL){
+		free(curr->fdt_entry);
+		free(fdt_entry0);
+		PANIC("Failed to allocate fdt[1]");
+	}
+	curr->fdt_entry[1] = fdt_entry1;
+	curr->fdt_entry[1]->type = STDOUT;
+
 }
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
@@ -251,7 +272,6 @@ __do_fork (void *aux) {
 	struct thread *parent = (struct thread *) args->t;
 	struct thread *current = thread_current ();
 
-	// current->parent = parent;
 	current->child_info = args->c;
 
 	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) */
@@ -286,19 +306,40 @@ __do_fork (void *aux) {
 
 	process_init ();
 
-	/* fdt 복사, 나중에 fdt 타입 바꾸면 수정 필요 */
-	for (int i = 2; i < FD_TABLE_SIZE; i++) {
-		struct file *file = parent->fd_table[i];
-		if (file == NULL)
+	/* fdt 복제 */
+	for (int i = 0; i < FD_TABLE_SIZE; i++) {
+		struct fdt_entry *fdt_entry = parent->fdt_entry[i];
+		if (fdt_entry == NULL)
 			continue;
 
-		lock_acquire(&file_lock);
-		struct file *dup = file_duplicate(file);
-		lock_release(&file_lock);
-		if (dup == NULL)
-			goto error;	//반환하면 안됨
+		/* file 아니면 */
+		if(fdt_entry->type == STDIN || fdt_entry->type == STDOUT){
 
-		current->fd_table[i] = dup; //dup한거 채우기
+			struct fdt_entry *entry = calloc(1, sizeof(struct fdt_entry));
+			if(entry == NULL){
+				goto error;			
+			current->fdt_entry[i] = entry;
+			current->fdt_entry[i]->type = fdt_entry->type;
+			}
+		}
+		/* file이면 */
+		else if(fdt_entry->type == FILE){
+
+			struct fdt_entry *entry = calloc(1, sizeof(struct fdt_entry));
+			if(entry == NULL)
+				goto error;	
+
+			lock_acquire(&file_lock);
+			struct file *dup = file_duplicate(fdt_entry->fdt);
+			lock_release(&file_lock);
+			if (dup == NULL){
+				free(entry);
+				goto error;	//반환하면 안됨
+			}
+			current->fdt_entry[i] = entry;
+			current->fdt_entry[i]->fdt = dup; //dup한거 채우기
+			current->fdt_entry[i]->type = FILE;
+		}
 	}
 
 	/* Finally, switch to the newly created process. */
@@ -388,6 +429,7 @@ process_exec (void *f_name) {
 
 	/* If load failed, quit. */
 	palloc_free_page (f_name);
+
 	if (!success) {
 		return -1;
 	}
@@ -456,16 +498,20 @@ process_exit (void) {
 	 * TODO: We recommend you to implement process resource cleanup here. */
 
 	/* fdt 초기화 */
-	if (curr->fd_table != NULL) {
-        for (int i = 2; i < FD_TABLE_SIZE; i++) {
-            if (curr->fd_table[i] != NULL) {
-                lock_acquire(&file_lock);
-                file_close(curr->fd_table[i]);
-                lock_release(&file_lock);
-            }
-        }
-        free(curr->fd_table);
+	
+	for(int i = 0; i < FD_TABLE_SIZE; i++){
+		// entry가 있는데
+		if (curr->fdt_entry[i] != NULL){
+			//안에 file도 있으면
+			if(curr->fdt_entry[i]->fdt != NULL){
+				lock_acquire(&file_lock);
+				file_close(curr->fdt_entry[i]->fdt);	//내부에서 free 됨
+				lock_release(&file_lock);
+			}
+		free(curr->fdt_entry[i]);
+		}
 	}
+	free(curr->fdt_entry);
 
 	process_cleanup ();
 
@@ -686,7 +732,6 @@ load (const char **argv, int argc, struct intr_frame *if_) {
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
 	load_arguments_to_stack(if_, argv, argc);
-
 
 	success = true;
 
