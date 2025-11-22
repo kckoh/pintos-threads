@@ -108,6 +108,7 @@ struct thread
 
 	int exit_status;
 	struct file **fd_table;
+	int fd_capacity;
 
 	struct list child_list;
 	// struct thread *parent;
