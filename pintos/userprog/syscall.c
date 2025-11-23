@@ -1,5 +1,6 @@
 #include "userprog/syscall.h"
 #include <stdio.h>
+#include <string.h>
 #include <syscall-nr.h>
 #include "threads/interrupt.h"
 #include "threads/thread.h"
@@ -8,6 +9,7 @@
 #include "threads/flags.h"
 #include "intrinsic.h"
 #include "include/threads/init.h"
+#include "userprog/fdt.h"
 
 #include "threads/synch.h"
 #include "include/filesys/filesys.h"
@@ -40,7 +42,6 @@ static void sys_seek(int fd, unsigned position);
 static unsigned sys_tell(int fd);
 static void sys_close(int fd);
 static void sys_exit(int status);
-
 static int sys_dup2(int oldfd, int newfd); 
 
 
@@ -284,6 +285,7 @@ static int sys_open(const char *file){
 
 			fdt_entry[i] = entry;
             fdt_entry[i]->fdt = opened_file;
+			fdt_entry[i]->ref_cnt = 1;
 			fdt_entry[i]->type = FILE;
             res = i;
             break;
@@ -314,12 +316,7 @@ static void sys_close(int fd)
 	if(fdt_entry == NULL || fdt_entry[fd] == NULL)
 		sys_exit(-1);
 
-	lock_acquire(&file_lock);
-	if(fdt_entry[fd]->fdt)
-		file_close(fdt_entry[fd]->fdt);	//해당 file close
-	free(fdt_entry[fd]);	//담고 있던 fdt_entry free & NULL로 만들기
-	fdt_entry[fd] = NULL;
-	lock_release(&file_lock);
+	close_fdt_entry(fdt_entry, fd);
 }
 
 
@@ -482,23 +479,11 @@ static int sys_dup2(int oldfd, int newfd) {
 
 	struct thread *curr = thread_current();
 
-	if(oldfd < 0 || oldfd > curr->FD_TABLE_SIZE || newfd < 0) //이상한 fd 차단
+	if(oldfd < 0 || oldfd >= curr->FD_TABLE_SIZE || newfd < 0) //이상한 fd 차단
 		return -1;
 
-	size_t old_cap = curr->FD_TABLE_SIZE;
-	if (newfd >= old_cap){
-		size_t need = newfd + 1;
-		size_t new_cap = old_cap ? old_cap : 1;
-		while (new_cap < need)
-			new_cap <<= 1;  // 바로 위 2^n승으로
-
-		struct fdt_entry **tmp = realloc(curr->fdt_entry, new_cap * sizeof *tmp);
-		if (tmp == NULL) 
-			return -1;
-		memset(tmp + old_cap, 0, (new_cap - old_cap) * sizeof *tmp);
-		curr->fdt_entry = tmp;
-		curr->FD_TABLE_SIZE = new_cap;
-	}
+	if (!increase_fdt_size(curr, newfd))
+		return -1;
 	
 	struct fdt_entry **fdt_entry = thread_current()->fdt_entry;
 	
@@ -506,30 +491,19 @@ static int sys_dup2(int oldfd, int newfd) {
 	if(curr->fdt_entry[oldfd] == NULL)
 		return -1;
 
-	struct fdt_entry *new_entry = calloc(1, sizeof(struct fdt_entry));
-	if (new_entry == NULL)
-		return -1;
-
 	/* newfd 있으면 */
 	if(curr->fdt_entry[newfd]){
 		/* 이미 같으면 newfd 리턴 */
-		if(curr->fdt_entry[oldfd]->fdt == curr->fdt_entry[newfd]->fdt){
-			free(new_entry);
+		if(curr->fdt_entry[oldfd] == curr->fdt_entry[newfd]){
 			return newfd;
 		}
-
 		/* 다르면 닫기*/
-		lock_acquire(&file_lock);
-		file_close(curr->fdt_entry[newfd]->fdt);
-		free(curr->fdt_entry[newfd]);
-		curr->fdt_entry[newfd] = NULL;
-		lock_release(&file_lock);
+		close_fdt_entry(fdt_entry, newfd);
 	}
 
 	/* 연결 */
-	curr->fdt_entry[newfd] = new_entry;
-	curr->fdt_entry[newfd]->fdt = curr->fdt_entry[oldfd]->fdt;
-	curr->fdt_entry[newfd]->type = FILE;
+	curr->fdt_entry[newfd] = curr->fdt_entry[oldfd];
+	curr->fdt_entry[newfd]->ref_cnt++;
 
 	return newfd;
 }

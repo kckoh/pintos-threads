@@ -23,6 +23,7 @@
 #endif
 
 #include "include/threads/synch.h"
+#include "userprog/fdt.h"
 #include <list.h>
 
 static void process_cleanup (void);
@@ -59,8 +60,11 @@ set_initd_stdio (struct thread *t) {
 	}
 	t->fdt_entry[0] = f0;
 	t->fdt_entry[0]->type = STDIN;
+	t->fdt_entry[0]->ref_cnt = 1;
+
 	t->fdt_entry[1] = f1;
 	t->fdt_entry[1]->type = STDOUT;
+	t->fdt_entry[1]->ref_cnt = 1;
 }
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
@@ -312,6 +316,7 @@ __do_fork (void *aux) {
 
 	process_init();
 
+	/* dup는 바꾸면 안된다. */
 	/* fdt 복제 */
 	for (int i = 0; i < current->FD_TABLE_SIZE; i++) {
 		struct fdt_entry *fdt_entry = parent->fdt_entry[i];
@@ -326,6 +331,7 @@ __do_fork (void *aux) {
 				goto error;
 			current->fdt_entry[i] = entry;
 			current->fdt_entry[i]->type = fdt_entry->type;
+			current->fdt_entry[i]->ref_cnt = 1;
 		}
 		/* file이면 */
 		else if(fdt_entry->type == FILE){
@@ -344,6 +350,7 @@ __do_fork (void *aux) {
 			current->fdt_entry[i] = entry;
 			current->fdt_entry[i]->fdt = dup; //dup한거 채우기
 			current->fdt_entry[i]->type = FILE;
+			current->fdt_entry[i]->ref_cnt = 1;
 		}
 	}
 
@@ -504,15 +511,9 @@ process_exit (void) {
 	/* fdt 초기화 */
 	if (curr->fdt_entry != NULL) {
 		for(int i = 0; i < curr->FD_TABLE_SIZE; i++){
-			// entry가 있는데
+			// entry가 있으면
 			if (curr->fdt_entry[i] != NULL){
-				//안에 file도 있으면
-				if(curr->fdt_entry[i]->fdt != NULL){
-					lock_acquire(&file_lock);
-					file_close(curr->fdt_entry[i]->fdt);	//내부에서 free 됨
-					lock_release(&file_lock);
-				}
-			free(curr->fdt_entry[i]);
+				close_fdt_entry(curr->fdt_entry, i);
 			}
 		}
 		free(curr->fdt_entry);
