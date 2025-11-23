@@ -29,7 +29,6 @@ typedef int tid_t;
 #define PRI_MIN 0	   /* Lowest priority. */
 #define PRI_DEFAULT 31 /* Default priority. */
 #define PRI_MAX 63	   /* Highest priority. */
-#define FD_TABLE_SIZE 128
 
 /* A kernel thread or user process.
  *
@@ -114,6 +113,7 @@ struct thread
 	// struct thread *parent;
 	struct child *child_info;
 	struct file *executable;
+	int FD_TABLE_SIZE;
 
 #endif
 #ifdef VM

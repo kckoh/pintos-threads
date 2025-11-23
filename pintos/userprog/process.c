@@ -40,7 +40,7 @@ process_init (void) {
 	/* 프로세스에 필요한 구조체 여기서 만들어야함.*/
 
 	/* fdt entry 포인터 배열 할당 */
-	curr->fdt_entry = calloc(FD_TABLE_SIZE, sizeof(struct fdt_entry*));
+	curr->fdt_entry = calloc(curr->FD_TABLE_SIZE, sizeof(struct fdt_entry*));
 	if (curr->fdt_entry == NULL)
         PANIC("Failed to allocate file descriptor table");
 }
@@ -145,6 +145,7 @@ initd (void *aux) {
 
 	//exit시 child_info 접근(sema_up, exit_status) 하기 때문에 여기서 해야함
 	thread_current()->child_info = child;
+	thread_current()->FD_TABLE_SIZE = 128; // 초기(initd) fdt size 128 세팅
 
 	process_init();
 
@@ -276,6 +277,7 @@ __do_fork (void *aux) {
 	struct thread *parent = (struct thread *) args->t;
 	struct thread *current = thread_current ();
 
+	current->FD_TABLE_SIZE = parent->FD_TABLE_SIZE;
 	current->child_info = args->c;
 
 	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) */
@@ -311,7 +313,7 @@ __do_fork (void *aux) {
 	process_init();
 
 	/* fdt 복제 */
-	for (int i = 0; i < FD_TABLE_SIZE; i++) {
+	for (int i = 0; i < current->FD_TABLE_SIZE; i++) {
 		struct fdt_entry *fdt_entry = parent->fdt_entry[i];
 		if (fdt_entry == NULL)
 			continue;
@@ -500,9 +502,8 @@ process_exit (void) {
 	 * TODO: We recommend you to implement process resource cleanup here. */
 
 	/* fdt 초기화 */
-	
 	if (curr->fdt_entry != NULL) {
-		for(int i = 0; i < FD_TABLE_SIZE; i++){
+		for(int i = 0; i < curr->FD_TABLE_SIZE; i++){
 			// entry가 있는데
 			if (curr->fdt_entry[i] != NULL){
 				//안에 file도 있으면
@@ -736,7 +737,7 @@ load (const char **argv, int argc, struct intr_frame *if_) {
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
 	load_arguments_to_stack(if_, argv, argc);
-	
+
 
 	success = true;
 
