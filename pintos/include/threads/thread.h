@@ -131,7 +131,7 @@ enum fd_type { STDIN, STDOUT, FILE, DIR }; //DIR은 과제 4
 struct fdt_entry {
 	enum fd_type type;
 	struct file *fdt;	// type FILE인 경우 가져다 쓰기
-	int ref_cnt;			// 공유 참조 수
+	int ref_cnt;
 	/* dir인 경우 추가??(과제4) */
 };
 

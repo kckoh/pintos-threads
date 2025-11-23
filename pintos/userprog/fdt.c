@@ -12,8 +12,8 @@ close_fdt_entry(struct fdt_entry **table, int fd){
 	struct fdt_entry *ent = table[fd];
 	if (ent == NULL)
 		return;
+		
 	table[fd] = NULL;
-
 	ent->ref_cnt--;
 	if (ent->type == FILE && ent->fdt != NULL) {
 		if (ent->ref_cnt == 0) {

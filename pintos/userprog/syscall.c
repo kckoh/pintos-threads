@@ -308,9 +308,7 @@ static void sys_close(int fd)
 
 	//fd 범위 검증
 	if(fd < 0 || fd >= curr->FD_TABLE_SIZE)
-	{
 		sys_exit(-1);
-	}	
 
 	struct fdt_entry **fdt_entry = curr->fdt_entry;
 	if(fdt_entry == NULL || fdt_entry[fd] == NULL)
@@ -318,7 +316,6 @@ static void sys_close(int fd)
 
 	close_fdt_entry(fdt_entry, fd);
 }
-
 
 static int sys_filesize(int fd){
 
@@ -352,7 +349,7 @@ static int sys_read(int fd, void *buffer, unsigned length){
 		return 0;
 
 	valid_put_buffer(buffer, length); //써보면서 확인해야함
-	if(fd < 0 || fd > curr->FD_TABLE_SIZE)  //fd 범위 이상한지 확인
+	if(fd < 0 || fd >= curr->FD_TABLE_SIZE)  //fd 범위 이상한지 확인
 		return -1;
 
 	struct fdt_entry **fdt_entry = curr->fdt_entry;
@@ -370,8 +367,7 @@ static int sys_read(int fd, void *buffer, unsigned length){
             if(!put_user((uint8_t *)buffer + i, c))
                 return i;  // 실패시 지금까지 읽은 바이트 수 반환
 		}
-	}
-	else{
+	}else{
 		/* fd에 해당하는 파일에서 length만큼 읽어서 buffer에 담음*/
 		struct file *file = curr->fdt_entry[fd]->fdt;
 		if(file == NULL){
@@ -391,7 +387,7 @@ static int sys_write(int fd, void *buffer, unsigned length) {
 	struct thread *curr = thread_current();
 
 	valid_get_buffer(buffer, length); //읽기(접근) 가능을 확인해야함
-	if(fd < 0 || fd > curr->FD_TABLE_SIZE)  //이상한 fd 차단
+	if(fd < 0 || fd >= curr->FD_TABLE_SIZE)  //이상한 fd 차단
 		return -1;
 
 	struct fdt_entry **fdt_entry = curr->fdt_entry;
@@ -423,21 +419,20 @@ static void sys_seek(int fd, unsigned position) {
 
 	struct thread *curr = thread_current();
 
-	if(fd < 0 || fd > curr->FD_TABLE_SIZE) 	//이상한 fd 차단
-		sys_exit(-1);
+	if(fd < 0 || fd >= curr->FD_TABLE_SIZE) 	//이상한 fd 차단
+		return;
 
 	struct fdt_entry **fdt_entry = curr->fdt_entry;
 	if(fdt_entry == NULL || fdt_entry[fd] == NULL)
-		sys_exit(-1);
+		return;
 
 	//IN OUT 불가능
 	if(fdt_entry[fd]->type == STDIN || fdt_entry[fd]->type == STDOUT)
-		sys_exit(-1);
-
+		return;
 
 	struct file *file = curr->fdt_entry[fd]->fdt;
 	if(file == NULL)
-		sys_exit(-1);
+		return;
 
 	lock_acquire(&file_lock);
 	file_seek(file, position);
@@ -482,6 +477,7 @@ static int sys_dup2(int oldfd, int newfd) {
 	if(oldfd < 0 || oldfd >= curr->FD_TABLE_SIZE || newfd < 0) //이상한 fd 차단
 		return -1;
 
+	/* 필요시 fdt 크기 늘리기 */
 	if (!increase_fdt_size(curr, newfd))
 		return -1;
 	
