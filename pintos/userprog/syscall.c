@@ -43,7 +43,6 @@ static void sys_close(int fd);
 static void sys_exit(int status);
 static int sys_dup2(int oldfd, int newfd); 
 
-
 struct lock file_lock;
 
 /* System call.
@@ -264,8 +263,6 @@ static int sys_open(const char *file){
 
 	struct thread *curr = thread_current();
 
-    struct fdt_entry **fdt_entry = curr->fdt_entry;
-
     lock_acquire(&file_lock);
     struct file *opened_file = filesys_open(file);
     if (opened_file == NULL) {
@@ -274,20 +271,25 @@ static int sys_open(const char *file){
         return -1;
     }
 
-    int res = -1;
-    for (size_t i = 2; i < curr->FD_TABLE_SIZE; i++) {
-        if(fdt_entry[i] == NULL){
-			if(!open_fdt_entry(fdt_entry, i, opened_file))
-				PANIC("Failed to allocate fdt_entry");
-            res = i;
-            break;
-        }
-    }
+	// 비어 있는 가장 낮은 fd 반환. 없으면 -1
+    int res = find_empty_fd(curr);
 
-    // No free descriptors - close the file
-    if (res == -1) {
-        file_close(opened_file);
-    }
+	// 모두 차있으면 fdt size 늘리기
+	if (res == -1){
+		if (!increase_fdt_size(curr, curr->FD_TABLE_SIZE)) {
+			file_close(opened_file);
+			lock_release(&file_lock);
+			return -1;
+		}
+		res = find_empty_fd(curr);
+	}
+
+	/* 늘렸으니 찾아서 넣기 */
+	if(!open_fdt_entry(curr->fdt_entry, res, opened_file)){
+		file_close(opened_file);
+		lock_release(&file_lock);
+		return -1;
+	}
 
     lock_release(&file_lock);
 

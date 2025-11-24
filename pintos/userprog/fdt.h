@@ -8,5 +8,6 @@ void close_fdt_entry(struct fdt_entry **table, int fd);
 bool increase_fdt_size(struct thread *t, int fd);
 bool dup_fdt_entry(struct fdt_entry *parent_ent, struct fdt_entry **child_ent);
 bool fork_fdt(struct thread *parent, struct thread *child);
+int find_empty_fd(struct thread *t);
 
 #endif /* USERPROG_FDT_H */

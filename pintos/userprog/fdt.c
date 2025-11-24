@@ -135,3 +135,13 @@ fork_fdt(struct thread *parent, struct thread *child){
 
 	return true;
 }
+
+/* fd 0,1은 건너뛰고 비어 있는 가장 낮은 fd 반환. 없으면 -1. */
+int
+find_empty_fd(struct thread *t){
+	for (int i = 2; i < t->FD_TABLE_SIZE; i++){
+		if (t->fdt_entry[i] == NULL)
+			return i;
+	}
+	return -1;
+}
