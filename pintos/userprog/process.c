@@ -255,10 +255,8 @@ __do_fork (void *aux) {
 	struct thread *parent = (struct thread *) args->t;
 	struct thread *current = thread_current ();
 
-	// current->parent = parent;
 	current->child_info = args->c;
 
-	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) */
 	struct intr_frame *parent_if = args->f;
 	bool succ = true;
 
@@ -276,54 +274,56 @@ __do_fork (void *aux) {
 	if (!supplemental_page_table_copy (&current->spt, &parent->spt))
 		goto error;
 #else
-	/*  주어진 pml4에 존재하는 모든 페이지 테이블 엔트리를 순회하며 func 호출
-		func가 false를 리턴하면 멈추고 false 리턴*/
 	if (!pml4_for_each (parent->pml4, duplicate_pte, parent))
 		goto error;
 #endif
 
-	/* TODO: Your code goes here.
-	 * TODO: Hint) To duplicate the file object, use `file_duplicate`
-	 * TODO:       in include/filesys/file.h. Note that parent should not return
-	 * TODO:       from the fork() until this function successfully duplicates
-	 * TODO:       the resources of parent.*/
-
 	process_init ();
 
-if(parent->fd_capacity > current->fd_capacity) {
-	struct file **new_table = realloc(current->fd_table, sizeof(struct file *) * parent->fd_capacity);
+	if(parent->fd_capacity > current->fd_capacity) {
+		struct file **new_table = realloc(current->fd_table, sizeof(struct file *) * parent->fd_capacity);
+		if(new_table == NULL)
+			goto error;
 
-	if(new_table == NULL)
-		goto error;
-
-	//새로 할당된 부분 초기화
-	for(int i=current->fd_capacity; i<parent->fd_capacity; i++) {
-		new_table[i] = NULL;
+		for(int i=current->fd_capacity; i<parent->fd_capacity; i++) {
+			new_table[i] = NULL;
+		}
+		current->fd_table = new_table;
+		current->fd_capacity = parent->fd_capacity;
 	}
-	current->fd_table = new_table;
-	current->fd_capacity = parent->fd_capacity;
-}
 
-for (int i = 0; i < parent->fd_capacity; i++) {
-    struct file *file = parent->fd_table[i];
-    if (file == NULL)
-        continue;
-    if (file == (struct file *)STDIN_FILENO || file == (struct file *)STDOUT_FILENO){
-        current->fd_table[i] = file;
-        continue;
-    }
-    lock_acquire(&file_lock);
-    struct file *dup = file_duplicate(file);
-    lock_release(&file_lock);
-    if (dup == NULL)
-        goto error;
-    current->fd_table[i] = dup;
-}
+	// 그림 C 방식: 포인터 복사 + 참조 카운트 증가
+	for (int i = 0; i < parent->fd_capacity; i++) {
+		struct file *file = parent->fd_table[i];
+		if (file == NULL)
+			continue;
+		
+		if (file == (struct file *)STDIN_FILENO || file == (struct file *)STDOUT_FILENO){
+			current->fd_table[i] = file;
+			continue;
+		}
+		
+		// 포인터만 복사
+		current->fd_table[i] = file;
+		
+		// 참조 카운트 증가
+		file_ref_inc(file);
+	}
+
+	// executable도 참조 카운트 관리
+	if (parent->executable != NULL) {
+		lock_acquire(&file_lock);
+		current->executable = file_duplicate(parent->executable);
+		lock_release(&file_lock);
+		if (current->executable == NULL)
+			goto error;
+		file_ref_inc(current->executable);
+	}
 
 	/* Finally, switch to the newly created process. */
 	if (succ){
 		args->success = true;
-		if_.R.rax = 0;	//자식은 0 반환
+		if_.R.rax = 0;
 		sema_up(&args->forksema);
 		do_iret (&if_);
 	}
@@ -468,52 +468,52 @@ process_wait (tid_t child_tid UNUSED) {
 /* Exit the process. This function is called by thread_exit (). */
 void
 process_exit (void) {
-	struct thread *curr = thread_current ();
-	/* TODO: Your code goes here.
-	 * TODO: Implement process termination message (see
-	 * TODO: project2/process_termination.html).
-	 * TODO: We recommend you to implement process resource cleanup here. */
+    struct thread *curr = thread_current ();
 
-	/* fdt 초기화 */
-	if (curr->fd_table != NULL) {
-	for (int i = 2; i < curr->fd_capacity; i++) {
-        struct file *file = curr->fd_table[i];
-        if (file != NULL &&
-            file != (struct file *) STDIN_FILENO &&
-            file != (struct file *) STDOUT_FILENO) {
+    /* fdt 초기화 */
+    if (curr->fd_table != NULL) {
+        for (int i = 2; i < curr->fd_capacity; i++) {
+            struct file *file = curr->fd_table[i];
+            if (file != NULL &&
+                file != (struct file *) STDIN_FILENO &&
+                file != (struct file *) STDOUT_FILENO) {
 
-            // 다른 fd가 같은 파일을 가리키는지 체크
-            bool should_close = true;
-            for (int j = i + 1; j < curr->fd_capacity; j++) {
-                if (curr->fd_table[j] == file) {
-                    curr->fd_table[j] = NULL;  // 중복 제거
+                // 같은 프로세스 내 중복 제거
+                for (int j = i + 1; j < curr->fd_capacity; j++) {
+                    if (curr->fd_table[j] == file) {
+                        curr->fd_table[j] = NULL;
+                    }
+                }
+
+                // 참조 카운트 감소 후 필요시 닫기
+                bool should_close = file_ref_dec(file);
+                if (should_close) {
+                    lock_acquire(&file_lock);
+                    file_close(file);
+                    lock_release(&file_lock);
                 }
             }
-
-            lock_acquire(&file_lock);
-            file_close(file);
-            lock_release(&file_lock);
+            curr->fd_table[i] = NULL;
         }
-        curr->fd_table[i] = NULL;
-    }
         free(curr->fd_table);
-	}
+    }
 
-	process_cleanup ();
+    process_cleanup ();
 
-	/* child_info 없으면 그냥 exit하면 됨 */
-	if (curr->child_info){
-		printf("%s: exit(%d)\n", curr->name, curr->exit_status);
-		sema_up(&curr->child_info->wait_sema);
-	}
+    if (curr->child_info){
+        printf("%s: exit(%d)\n", curr->name, curr->exit_status);
+        sema_up(&curr->child_info->wait_sema);
+    }
 
-	if (curr->executable) {
-	    lock_acquire(&file_lock);
+    if (curr->executable) {
+        bool should_close = file_ref_dec(curr->executable);
+        lock_acquire(&file_lock);
         file_allow_write(curr->executable);
-        file_close(curr->executable);
+        if (should_close) {
+            file_close(curr->executable);
+        }
         lock_release(&file_lock);
-	}
-
+    }
 }
 
 /* Free the current process's resources. */

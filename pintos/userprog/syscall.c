@@ -43,7 +43,19 @@ static void sys_exit(int status);
 
 static int sys_dup2(int oldfd, int newfd);
 
+void file_ref_inc(struct file *file);
+bool file_ref_dec(struct file *file);
+
+#define MAX_SHARED_FILES 128
+
+struct shared_file {
+    struct file *file;
+    int ref_count;
+};
+
+static struct lock shared_files_lock;
 struct lock file_lock;
+static struct shared_file shared_files[MAX_SHARED_FILES];
 
 /* System call.
  *
@@ -91,8 +103,13 @@ put_user (uint8_t *udst, uint8_t byte) {
 
 void
 syscall_init (void) {
-
-	lock_init(&file_lock);
+    lock_init(&file_lock);
+    lock_init(&shared_files_lock);
+    
+    for (int i = 0; i < MAX_SHARED_FILES; i++) {
+        shared_files[i].file = NULL;
+        shared_files[i].ref_count = 0;
+    }
 
 	write_msr(MSR_STAR, ((uint64_t)SEL_UCSEG - 0x10) << 48  |
 			((uint64_t)SEL_KCSEG) << 32);
@@ -103,6 +120,65 @@ syscall_init (void) {
 	 * mode stack. Therefore, we masked the FLAG_FL. */
 	write_msr(MSR_SYSCALL_MASK,
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
+}
+
+void file_ref_inc(struct file *file) {
+    if (file == NULL || 
+        file == (struct file *)STDIN_FILENO || 
+        file == (struct file *)STDOUT_FILENO)
+        return;
+    
+    lock_acquire(&shared_files_lock);
+    
+    // 기존 엔트리 찾기
+    for (int i = 0; i < MAX_SHARED_FILES; i++) {
+        if (shared_files[i].file == file) {
+            shared_files[i].ref_count++;
+            lock_release(&shared_files_lock);
+            return;
+        }
+    }
+    
+    // 새 엔트리 추가
+    for (int i = 0; i < MAX_SHARED_FILES; i++) {
+        if (shared_files[i].file == NULL) {
+            shared_files[i].file = file;
+            shared_files[i].ref_count = 1;
+            lock_release(&shared_files_lock);
+            return;
+        }
+    }
+    
+    lock_release(&shared_files_lock);
+    PANIC("Too many shared files");
+}
+
+// 파일 참조 감소
+bool file_ref_dec(struct file *file) {
+    if (file == NULL || 
+        file == (struct file *)STDIN_FILENO || 
+        file == (struct file *)STDOUT_FILENO)
+        return false;
+    
+    lock_acquire(&shared_files_lock);
+    
+    for (int i = 0; i < MAX_SHARED_FILES; i++) {
+        if (shared_files[i].file == file) {
+            shared_files[i].ref_count--;
+            
+            if (shared_files[i].ref_count == 0) {
+                shared_files[i].file = NULL;
+                lock_release(&shared_files_lock);
+                return true;  // 실제로 닫아야 함
+            }
+            
+            lock_release(&shared_files_lock);
+            return false;  // 아직 참조 남음
+        }
+    }
+    
+    lock_release(&shared_files_lock);
+    return true;  // 찾지 못함 = 처음 열린 파일, 닫아야 함
 }
 
 /* The main system call interface */
@@ -266,10 +342,13 @@ static int sys_open(const char *file){
     lock_acquire(&file_lock);
     struct file *opened_file = filesys_open(file);
     if (opened_file == NULL) {
-		/* open 실패면 inode close, free(file) 해줌 */
         lock_release(&file_lock); 
         return -1;
     }
+    lock_release(&file_lock);
+
+    // 참조 카운트 초기화
+    file_ref_inc(opened_file);
 
     int res = -1;
     for (size_t i = 2; i < thread_current()->fd_capacity; i++) {
@@ -282,23 +361,24 @@ static int sys_open(const char *file){
 
     // No free descriptors - close the file
     if (res == -1) {
+        file_ref_dec(opened_file);
+        lock_acquire(&file_lock);
         file_close(opened_file);
+        lock_release(&file_lock);
     }
-
-    lock_release(&file_lock);
 
     return res;
 }
 
 static void sys_close(int fd)
 {
-	struct thread *curr = thread_current();
+    struct thread *curr = thread_current();
 
-	if(fd < 0 || fd >= curr->fd_capacity){
+    if(fd < 0 || fd >= curr->fd_capacity){
         return;
     }
 
-	struct file **fd_table = curr->fd_table;
+    struct file **fd_table = curr->fd_table;
     struct file *file = fd_table[fd];
 
     if(file == NULL ||
@@ -308,16 +388,25 @@ static void sys_close(int fd)
         return;
     }
 
-    // 다른 fd가 같은 파일을 가리키는지 체크
-    bool should_close = true;
+    // fd_table에서 제거
+    fd_table[fd] = NULL;
+
+    // 다른 fd가 같은 파일을 가리키는지 체크 (같은 프로세스 내)
+    bool used_in_same_process = false;
     for (int i = 0; i < curr->fd_capacity; i++) {
-        if (i != fd && fd_table[i] == file) {
-            should_close = false;
+        if (fd_table[i] == file) {
+            used_in_same_process = true;
             break;
         }
     }
 
-    fd_table[fd] = NULL;
+    // 같은 프로세스 내에서 사용 중이면 여기서 종료
+    if (used_in_same_process) {
+        return;
+    }
+
+    // 프로세스 간 참조 카운트 감소
+    bool should_close = file_ref_dec(file);
 
     if (should_close) {
         lock_acquire(&file_lock);
@@ -485,7 +574,7 @@ static int sys_dup2(int oldfd, int newfd) {
         curr->fd_table[newfd] = (struct file *) STDOUT_FILENO;
     } else {
         curr->fd_table[newfd] = old_file;  // 같은 포인터 공유
-
+		file_ref_inc(old_file);
     }
 
     return newfd;
