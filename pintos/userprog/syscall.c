@@ -46,8 +46,6 @@ static int sys_dup2(int oldfd, int newfd);
 void file_ref_inc(struct file *file);
 bool file_ref_dec(struct file *file);
 
-#define MAX_SHARED_FILES 128
-
 struct shared_file {
     struct file *file;
     int ref_count;
@@ -55,7 +53,11 @@ struct shared_file {
 
 static struct lock shared_files_lock;
 struct lock file_lock;
-static struct shared_file shared_files[MAX_SHARED_FILES];
+
+#define INITIAL_SHARED_FILES_SIZE 16
+static struct shared_file *shared_files = NULL;
+static int shared_files_capacity = 0;
+static int shared_files_count = 0; 
 
 /* System call.
  *
@@ -106,7 +108,15 @@ syscall_init (void) {
     lock_init(&file_lock);
     lock_init(&shared_files_lock);
     
-    for (int i = 0; i < MAX_SHARED_FILES; i++) {
+    shared_files = malloc(INITIAL_SHARED_FILES_SIZE * sizeof(struct shared_file));
+    if (shared_files == NULL) {
+        PANIC("Failed to allocate shared_files array");
+    }
+    
+    shared_files_capacity = INITIAL_SHARED_FILES_SIZE;
+    shared_files_count = 0;
+    
+    for (int i = 0; i < shared_files_capacity; i++) {
         shared_files[i].file = NULL;
         shared_files[i].ref_count = 0;
     }
@@ -131,7 +141,7 @@ void file_ref_inc(struct file *file) {
     lock_acquire(&shared_files_lock);
     
     // 기존 엔트리 찾기
-    for (int i = 0; i < MAX_SHARED_FILES; i++) {
+    for (int i = 0; i < shared_files_capacity; i++) {
         if (shared_files[i].file == file) {
             shared_files[i].ref_count++;
             lock_release(&shared_files_lock);
@@ -139,21 +149,45 @@ void file_ref_inc(struct file *file) {
         }
     }
     
-    // 새 엔트리 추가
-    for (int i = 0; i < MAX_SHARED_FILES; i++) {
+    // 빈 슬롯 찾기
+    int empty_slot = -1;
+    for (int i = 0; i < shared_files_capacity; i++) {
         if (shared_files[i].file == NULL) {
-            shared_files[i].file = file;
-            shared_files[i].ref_count = 1;
-            lock_release(&shared_files_lock);
-            return;
+            empty_slot = i;
+            break;
         }
     }
     
+    // 빈 슬롯이 없으면 배열 확장
+    if (empty_slot == -1) {
+        int new_capacity = shared_files_capacity * 2;
+        struct shared_file *new_array = realloc(shared_files, new_capacity * sizeof(struct shared_file));
+        
+        if (new_array == NULL) {
+            lock_release(&shared_files_lock);
+            PANIC("Failed to expand shared_files array");
+        }
+        
+        shared_files = new_array;
+        
+        // 새로 할당된 영역 초기화
+        for (int i = shared_files_capacity; i < new_capacity; i++) {
+            shared_files[i].file = NULL;
+            shared_files[i].ref_count = 0;
+        }
+        
+        empty_slot = shared_files_capacity;  // 첫 번째 새 슬롯
+        shared_files_capacity = new_capacity;
+    }
+    
+    // 빈 슬롯에 추가
+    shared_files[empty_slot].file = file;
+    shared_files[empty_slot].ref_count = 1;
+    shared_files_count++;
+    
     lock_release(&shared_files_lock);
-    PANIC("Too many shared files");
 }
 
-// 파일 참조 감소
 bool file_ref_dec(struct file *file) {
     if (file == NULL || 
         file == (struct file *)STDIN_FILENO || 
@@ -162,12 +196,13 @@ bool file_ref_dec(struct file *file) {
     
     lock_acquire(&shared_files_lock);
     
-    for (int i = 0; i < MAX_SHARED_FILES; i++) {
+    for (int i = 0; i < shared_files_capacity; i++) {
         if (shared_files[i].file == file) {
             shared_files[i].ref_count--;
             
             if (shared_files[i].ref_count == 0) {
                 shared_files[i].file = NULL;
+                shared_files_count--;
                 lock_release(&shared_files_lock);
                 return true;  // 실제로 닫아야 함
             }
