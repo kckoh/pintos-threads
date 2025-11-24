@@ -470,8 +470,6 @@ static int sys_dup2(int oldfd, int newfd) {
 	if(oldfd < 0 || oldfd >= curr->FD_TABLE_SIZE || newfd < 0) //이상한 fd 차단
 		return -1;
 	
-	struct fdt_entry **fdt_entry = thread_current()->fdt_entry;
-	
 	/* oldfd 유효하지 않으면 -1 리턴 */
 	if(curr->fdt_entry[oldfd] == NULL)
 		return -1;
@@ -487,7 +485,7 @@ static int sys_dup2(int oldfd, int newfd) {
 			return newfd;
 		}
 		/* 다르면 닫기*/
-		close_fdt_entry(fdt_entry, newfd);
+		close_fdt_entry(curr->fdt_entry, newfd);
 	}
 
 	/* 연결 */

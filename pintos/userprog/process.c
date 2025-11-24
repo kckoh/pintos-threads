@@ -202,7 +202,6 @@ process_fork (const char *name, struct intr_frame *if_) {
 	/* Clone current thread to new thread.*/
 	tid_t tid = thread_create (name, PRI_DEFAULT, __do_fork, fork);
 	if(tid == TID_ERROR){
-		/* 자원 해제 */
 		free(fork);
 		free(c);
 		return TID_ERROR;
@@ -337,6 +336,7 @@ __do_fork (void *aux) {
 	}
 error:
 	args->success = false;
+	current->child_info = NULL;
 	sema_up(&args->forksema);
 	thread_exit ();
 }
