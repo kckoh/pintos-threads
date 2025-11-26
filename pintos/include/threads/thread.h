@@ -29,7 +29,6 @@ typedef int tid_t;
 #define PRI_MIN 0	   /* Lowest priority. */
 #define PRI_DEFAULT 31 /* Default priority. */
 #define PRI_MAX 63	   /* Highest priority. */
-#define FD_TABLE_SIZE 128
 
 /* A kernel thread or user process.
  *
@@ -107,12 +106,14 @@ struct thread
 	uint64_t *pml4; /* Page map level 4 */
 
 	int exit_status;
-	struct file **fd_table;
+
+	struct fdt_entry **fdt_entry;
 
 	struct list child_list;
 	// struct thread *parent;
 	struct child *child_info;
 	struct file *executable;
+	int FD_TABLE_SIZE;
 
 #endif
 #ifdef VM
@@ -125,11 +126,21 @@ struct thread
 	unsigned magic;		  /* Detects stack overflow. */
 };
 
-struct child {
+enum fd_type { STDIN, STDOUT, FILE, DIR }; //DIR은 과제 4
+
+struct fdt_entry {
+	enum fd_type type;
+	struct file *fdt;	// type FILE인 경우 가져다 쓰기
+	int ref_cnt;
+	/* dir인 경우 추가??(과제4) */
+};
+
+struct child { 
 	struct list_elem child_elem;
 	tid_t child_tid;
 	int exit_status;
 	bool waited;
+	bool p_alive;
 	struct semaphore wait_sema;
 };
 

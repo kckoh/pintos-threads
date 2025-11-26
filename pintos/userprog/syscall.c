@@ -8,6 +8,7 @@
 #include "threads/flags.h"
 #include "intrinsic.h"
 #include "include/threads/init.h"
+#include "userprog/fdt.h"
 
 #include "threads/synch.h"
 #include "include/filesys/filesys.h"
@@ -40,7 +41,7 @@ static void sys_seek(int fd, unsigned position);
 static unsigned sys_tell(int fd);
 static void sys_close(int fd);
 static void sys_exit(int status);
-
+static int sys_dup2(int oldfd, int newfd); 
 
 struct lock file_lock;
 
@@ -169,6 +170,10 @@ syscall_handler (struct intr_frame *f) {
 			sys_close(f->R.rdi);
 			break;
 
+		case SYS_DUP2:
+			f->R.rax = sys_dup2(f->R.rdi, f->R.rsi);
+			break;
+
 		default:
 			printf("system call! (unimplemented syscall number: %d)\n", syscall_num);
 			thread_exit();
@@ -199,7 +204,6 @@ static void valid_put_buffer(char *buffer, unsigned length){
 static void sys_exit(int status) {
 
 	struct thread *curr = thread_current();
-	curr->child_info->exit_status = status;
 	curr->exit_status = status;
 	thread_exit();
 }
@@ -257,68 +261,71 @@ static bool sys_remove(const char *file){
 static int sys_open(const char *file){
     valid_get_addr(file);
 
-    struct file **fd_table = thread_current()->fd_table;
+	struct thread *curr = thread_current();
+
     lock_acquire(&file_lock);
     struct file *opened_file = filesys_open(file);
+	lock_release(&file_lock);
     if (opened_file == NULL) {
 		/* open 실패면 inode close, free(file) 해줌 */
-        lock_release(&file_lock); 
         return -1;
     }
 
-    int res = -1;
-    for (size_t i = 2; i < FD_TABLE_SIZE; i++) {
-        if(fd_table[i] == NULL){
-            fd_table[i] = opened_file;
-            res = i;
-            break;
-        }
-    }
+	// 비어 있는 가장 낮은 fd 반환. 없으면 -1
+    int res = find_empty_fd(curr);
 
-    // No free descriptors - close the file
-    if (res == -1) {
-        file_close(opened_file);
-    }
+	// 모두 차있으면 fdt size 늘리기
+	if (res == -1){
+		int old_size = curr->FD_TABLE_SIZE;
+		if (!increase_fdt_size(curr, old_size)) {
+			lock_acquire(&file_lock);
+			file_close(opened_file);
+			lock_release(&file_lock);
+			return -1;
+		}
+		res = old_size;
+	}
 
-    lock_release(&file_lock);
+	/* 늘렸으니 찾아서 넣기 */
+	if(!open_fdt_entry(curr->fdt_entry, res, opened_file)){
+		lock_acquire(&file_lock);
+		file_close(opened_file);
+		lock_release(&file_lock);
+		return -1;
+	}
 
     return res;
 }
 
 static void sys_close(int fd)
 {
+	struct thread *curr = thread_current();
+
 	//fd 범위 검증
-	if(fd<2 || fd>=FD_TABLE_SIZE)
-	{
+	if(fd < 0 || fd >= curr->FD_TABLE_SIZE)
 		sys_exit(-1);
-	}
 
-	struct file **fd_table = thread_current()->fd_table;
-	if(fd_table == NULL || fd_table[fd]==NULL)
-	{
+	struct fdt_entry **fdt_entry = curr->fdt_entry;
+	if(fdt_entry == NULL || fdt_entry[fd] == NULL)
 		sys_exit(-1);
-	}
 
-	lock_acquire(&file_lock);
-	file_close(fd_table[fd]);
-	fd_table[fd]=NULL;			//fd 재사용 가능
-	lock_release(&file_lock);
+	close_fdt_entry(fdt_entry, fd);
 }
 
-
 static int sys_filesize(int fd){
+
+	struct thread *curr = thread_current();
+
     // Validate fd range
-    if (fd < 0 || fd >= FD_TABLE_SIZE)
+    if (fd < 0 || fd >= curr->FD_TABLE_SIZE)
         return -1;
 
+	struct fdt_entry **fdt_entry = curr->fdt_entry;
+	if(fdt_entry == NULL || fdt_entry[fd] == NULL)
+		return -1;
 
-    struct file **fd_table = thread_current()->fd_table;
-    if (fd_table == NULL)
-        return -1;
-
-
-    struct file *f = fd_table[fd];
-    if (f == NULL)
+	struct file *f = fdt_entry[fd]->fdt;
+	if (f == NULL)
         return -1;
 
 	lock_acquire(&file_lock);
@@ -328,16 +335,26 @@ static int sys_filesize(int fd){
     return size;
 }
 
+/* fd를 읽어서 buffer에 담기, STDOUT 불가능 */
 static int sys_read(int fd, void *buffer, unsigned length){
+
+	struct thread *curr = thread_current();
 
 	if(length == 0)
 		return 0;
 
 	valid_put_buffer(buffer, length); //써보면서 확인해야함
-	if(fd < 0 || fd > FD_TABLE_SIZE || fd == 1)
+	if(fd < 0 || fd >= curr->FD_TABLE_SIZE)  //fd 범위 이상한지 확인
 		return -1;
 
-	if(fd == 0){
+	struct fdt_entry **fdt_entry = curr->fdt_entry;
+	if(fdt_entry == NULL || fdt_entry[fd] == NULL)
+		return -1;
+
+	if(fdt_entry[fd]->type == STDOUT)
+		return -1;
+
+	if(fdt_entry[fd]->type == STDIN){
        for (unsigned i = 0; i < length; i++) {
             uint8_t c = input_getc();
             // 쓰기 시
@@ -345,36 +362,45 @@ static int sys_read(int fd, void *buffer, unsigned length){
             if(!put_user((uint8_t *)buffer + i, c))
                 return i;  // 실패시 지금까지 읽은 바이트 수 반환
 		}
-	}
-	else{
+	}else{
 		/* fd에 해당하는 파일에서 length만큼 읽어서 buffer에 담음*/
-		struct file *file = thread_current()->fd_table[fd];
+		struct file *file = curr->fdt_entry[fd]->fdt;
 		if(file == NULL){
 			return -1;
 		}
 		lock_acquire(&file_lock);
-		/* file_reat_at 필요시 변경할지도 */
 		int size = file_read(file, buffer, length);
 		lock_release(&file_lock);
 		return size;
 	}
 }
 
+/* buffer 내용을 fd에 쓰기, STDIN 불가*/
 static int sys_write(int fd, void *buffer, unsigned length) {
 
+	struct thread *curr = thread_current();
+
 	valid_get_buffer(buffer, length); //읽기(접근) 가능을 확인해야함
-	if(fd <= 0 || fd > FD_TABLE_SIZE) //0(stdin) 불가능 1~127까지 가능해야함
+	if(fd < 0 || fd >= curr->FD_TABLE_SIZE)  //이상한 fd 차단
 		return -1;
 
-	if (fd == 1) {
+	struct fdt_entry **fdt_entry = curr->fdt_entry;
+	if(fdt_entry == NULL || fdt_entry[fd] == NULL)
+		return -1;
+
+	if(fdt_entry[fd]->type == STDIN)
+		return -1;
+
+	if(fdt_entry[fd]->type == STDOUT){
 		/* stdout으로 write*/
 		putbuf(buffer, length);  // Write to console
 		return length;         // Return number of bytes written
 	} else {
 		/* file에 write*/
-		struct file *file = thread_current()->fd_table[fd];
+		struct file *file = curr->fdt_entry[fd]->fdt;
 		if(file == NULL)
 			return -1;
+
 		lock_acquire(&file_lock);
 		off_t size = file_write(file, buffer, length);
 		lock_release(&file_lock);
@@ -385,12 +411,22 @@ static int sys_write(int fd, void *buffer, unsigned length) {
 /* 반환값이 없으면 문제 생기면 그냥 exit 시킨다. */
 static void sys_seek(int fd, unsigned position) {
 
-	if(fd < 2 || fd > FD_TABLE_SIZE)
-		sys_exit(-1);
+	struct thread *curr = thread_current();
 
-	struct file *file = thread_current()->fd_table[fd];
+	if(fd < 0 || fd >= curr->FD_TABLE_SIZE) 	//이상한 fd 차단
+		return;
+
+	struct fdt_entry **fdt_entry = curr->fdt_entry;
+	if(fdt_entry == NULL || fdt_entry[fd] == NULL)
+		return;
+
+	//IN OUT 불가능
+	if(fdt_entry[fd]->type == STDIN || fdt_entry[fd]->type == STDOUT)
+		return;
+
+	struct file *file = curr->fdt_entry[fd]->fdt;
 	if(file == NULL)
-		sys_exit(-1);
+		return;
 
 	lock_acquire(&file_lock);
 	file_seek(file, position);
@@ -399,15 +435,63 @@ static void sys_seek(int fd, unsigned position) {
 
 static unsigned sys_tell(int fd){
 
-	if(fd < 2 || fd > FD_TABLE_SIZE)
-		return -1;
+	struct thread *curr = thread_current();
 
-	struct file *file = thread_current()->fd_table[fd];
+	if(fd < 0 || fd >= curr->FD_TABLE_SIZE) 	//이상한 fd 차단
+		sys_exit(-1);
+
+	struct fdt_entry **fdt_entry = curr->fdt_entry;
+	if(fdt_entry == NULL || fdt_entry[fd] == NULL)
+		sys_exit(-1);
+
+	//IN OUT 불가능
+	if(fdt_entry[fd]->type == STDIN || fdt_entry[fd]->type == STDOUT)
+		sys_exit(-1);
+
+	struct file *file = curr->fdt_entry[fd]->fdt;
 	if(file == NULL)
-		return -1;
+		sys_exit(-1);
 
 	lock_acquire(&file_lock);
 	unsigned size = file_tell(file);
 	lock_release(&file_lock);
 	return size;
+}
+
+/*  stdin, stdout 닫기 가능해야함
+	newfd가 이미 있다면 close + 해제 해야함
+	oldfd entry를 newfd에 연결 */
+
+/*  oldfd가 유효하지 않으면 그냥 -1 리턴(newfd 안닫음)
+	이미 oldfd와 newfd가 같으면 그냥 newfd리턴 */
+static int sys_dup2(int oldfd, int newfd) { 
+
+	struct thread *curr = thread_current();
+
+	if(oldfd < 0 || oldfd >= curr->FD_TABLE_SIZE || newfd < 0) //이상한 fd 차단
+		return -1;
+	
+	/* oldfd 유효하지 않으면 -1 리턴 */
+	if(curr->fdt_entry[oldfd] == NULL)
+		return -1;
+
+	/* 필요시 fdt 크기 늘리기 */
+	if (!increase_fdt_size(curr, newfd))
+		return -1;
+
+	/* newfd 있으면 */
+	if(curr->fdt_entry[newfd]){
+		/* 이미 같으면 newfd 리턴 */
+		if(curr->fdt_entry[oldfd] == curr->fdt_entry[newfd]){
+			return newfd;
+		}
+		/* 다르면 닫기*/
+		close_fdt_entry(curr->fdt_entry, newfd);
+	}
+
+	/* 연결 */
+	curr->fdt_entry[newfd] = curr->fdt_entry[oldfd];
+	curr->fdt_entry[newfd]->ref_cnt++;
+
+	return newfd;
 }

@@ -23,25 +23,61 @@
 #endif
 
 #include "include/threads/synch.h"
+#include "userprog/fdt.h"
 #include <list.h>
 
 static void process_cleanup (void);
+static void set_initd_stdio (struct thread *t);
 static bool load (const char **argv, int argc, struct intr_frame *if_);
 static void initd (void *aux);
 static void __do_fork (void *);
+void child_init(struct thread *parent, struct child *c);
 
 extern struct lock file_lock;
 
+/* 자식 구조체 세팅 */
+void child_init(struct thread *parent, struct child *c){
+	c->child_tid = -1; //일단 안쓰는 -1로
+	c->exit_status = -1;
+	c->waited = false;
+	c->p_alive = true;
+	sema_init(&c->wait_sema, 0);
+	list_push_back(&parent->child_list, &c->child_elem);
+}
+
 /* General process initializer for initd and other process. */
-static void
+static bool
 process_init (void) {
 	struct thread *curr = thread_current ();
 	/* 프로세스에 필요한 구조체 여기서 만들어야함.*/
-	// initialize the fd_table
-	curr->fd_table = calloc(FD_TABLE_SIZE, sizeof(struct file *));
-	if (curr->fd_table == NULL) {
-        PANIC("Failed to allocate file descriptor table");
+
+	/* fdt entry 포인터 배열 할당 */
+	curr->fdt_entry = calloc(curr->FD_TABLE_SIZE, sizeof(struct fdt_entry*));
+	if (curr->fdt_entry == NULL)
+        return false;
+	return true;
+}
+
+/* initd 처음 STDIN/STDOUT 세팅, (이후 fork는 부모 따라가도록) */
+static void
+set_initd_stdio (struct thread *t) {
+
+	struct fdt_entry *f0 = calloc(1, sizeof(struct fdt_entry));
+	if (f0 == NULL)
+		PANIC("Failed to initd STDIN setting");
+
+	struct fdt_entry *f1 = calloc(1, sizeof(struct fdt_entry));
+	if (f1 == NULL) {
+		free(f0);
+		PANIC("Failed to initd STDOUT setting");
 	}
+	t->fdt_entry[0] = f0;
+	t->fdt_entry[0]->type = STDIN;
+	t->fdt_entry[0]->ref_cnt = 1;
+
+	t->fdt_entry[1] = f1;
+	t->fdt_entry[1]->type = STDOUT;
+	t->fdt_entry[1]->ref_cnt = 1;
 }
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
@@ -91,22 +127,19 @@ process_create_initd (const char *file_name) {
 	initd_arg->fn_copy = fn_copy;
 	initd_arg->c = c;
 
-	sema_init(&c->wait_sema, 0);	// 먼저 sema_init 해야함!!
+	child_init(parent, c);
 
 	/* Create a new thread to execute FILE_NAME. */
 	tid = thread_create (file_name, PRI_DEFAULT, initd, initd_arg);
 	if (tid == TID_ERROR){
+		list_remove(&c->child_elem);
 		palloc_free_page (fn_copy);
 		free(c);
 		free(initd_arg);
 		return TID_ERROR;
 	}
 
-	// 자식(initd) 구조체 필드 채우고 부모(main) list에 등록
 	c->child_tid = tid;
-	c->exit_status = -1;
-	c->waited = false;
-	list_push_back(&parent->child_list, &c->child_elem);
 
 	return tid;
 }
@@ -118,16 +151,21 @@ initd (void *aux) {
 	supplemental_page_table_init (&thread_current ()->spt);
 #endif
 
-	/* initd 스레드의 child 구조체 생성 */
+	struct thread *curr = thread_current();	
+
 	struct initd_arg *i = aux;
     struct child *child = i->c;
     char *file_name = i->fn_copy;
     free(i);	// aux로 전달된 구조체 free
 
-	//exit시 child_info 접근(sema_up, exit_status) 하기 때문에 여기서 해야함
-	thread_current()->child_info = child;
+	//exit시 child_info 접근하기 때문에 여기서 해야함
+	curr->child_info = child;
+	curr->FD_TABLE_SIZE = 128; // 초기(initd) fdt size 128 세팅
 
-	process_init ();
+	process_init();
+
+	set_initd_stdio(curr);
+
 	if (process_exec (file_name) < 0)
 		PANIC("Fail to launch initd\n");
 	NOT_REACHED ();
@@ -158,23 +196,20 @@ process_fork (const char *name, struct intr_frame *if_) {
 	fork->f = if_;
 	fork->t = thread_current();
 	fork->c = c;
+
 	sema_init(&fork->forksema, 0); //__do_fork 결과 확인용
-	sema_init(&c->wait_sema, 0); // create전에 init 해야함
+
+	child_init(thread_current(), c);
 
 	/* Clone current thread to new thread.*/
 	tid_t tid = thread_create (name, PRI_DEFAULT, __do_fork, fork);
 	if(tid == TID_ERROR){
-		/* 자원 해제 */
 		free(fork);
 		free(c);
 		return TID_ERROR;
 	}
-
 	// 자식 구조체 필드 채우고 부모 list에 등록
 	c->child_tid = tid;
-	c->exit_status = -1;
-	c->waited = false;
-	list_push_back(&thread_current()->child_list, &c->child_elem);
 
 	// __do_fork 결과 확인용
 	sema_down(&fork->forksema);
@@ -184,7 +219,10 @@ process_fork (const char *name, struct intr_frame *if_) {
 		return tid;
 	}
 	else{
+		// 실패 시 free하고 반환
 		free(fork);
+		// list_remove(&c->child_elem);
+		// free(c);
 		return TID_ERROR;
 	}
 }
@@ -251,7 +289,8 @@ __do_fork (void *aux) {
 	struct thread *parent = (struct thread *) args->t;
 	struct thread *current = thread_current ();
 
-	// current->parent = parent;
+	/* 자식 정보 채우기 */
+	current->FD_TABLE_SIZE = parent->FD_TABLE_SIZE;
 	current->child_info = args->c;
 
 	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) */
@@ -284,22 +323,12 @@ __do_fork (void *aux) {
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
 
-	process_init ();
+	if(!process_init())
+		goto error;
 
-	/* fdt 복사, 나중에 fdt 타입 바꾸면 수정 필요 */
-	for (int i = 2; i < FD_TABLE_SIZE; i++) {
-		struct file *file = parent->fd_table[i];
-		if (file == NULL)
-			continue;
-
-		lock_acquire(&file_lock);
-		struct file *dup = file_duplicate(file);
-		lock_release(&file_lock);
-		if (dup == NULL)
-			goto error;	//반환하면 안됨
-
-		current->fd_table[i] = dup; //dup한거 채우기
-	}
+	/* fdt 복제 */
+	if(!fork_fdt(parent, current))
+		goto error;
 
 	/* Finally, switch to the newly created process. */
 	if (succ){
@@ -455,25 +484,20 @@ process_exit (void) {
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
 
+	if(curr->pml4 == NULL) return;	//커널 스레드면 그냥 리턴
+
 	/* fdt 초기화 */
-	if (curr->fd_table != NULL) {
-        for (int i = 2; i < FD_TABLE_SIZE; i++) {
-            if (curr->fd_table[i] != NULL) {
-                lock_acquire(&file_lock);
-                file_close(curr->fd_table[i]);
-                lock_release(&file_lock);
-            }
-        }
-        free(curr->fd_table);
+	if (curr->fdt_entry != NULL) {
+		for(int i = 0; i < curr->FD_TABLE_SIZE; i++){
+			// entry가 있으면
+			if (curr->fdt_entry[i] != NULL){
+				close_fdt_entry(curr->fdt_entry, i);
+			}
+		}
+		free(curr->fdt_entry);
 	}
 
 	process_cleanup ();
-
-	/* child_info 없으면 그냥 exit하면 됨 */
-	if (curr->child_info){
-		printf("%s: exit(%d)\n", curr->name, curr->exit_status);
-		sema_up(&curr->child_info->wait_sema);
-	}
 
 	if (curr->executable) {
 	    lock_acquire(&file_lock);
@@ -481,6 +505,27 @@ process_exit (void) {
         file_close(curr->executable);
         lock_release(&file_lock);
 	}
+
+	/* 부모가 먼저 죽으면 자식들에게 p_alive = false로 죽었음을 전달 */
+	struct list_elem *e = list_begin(&curr->child_list);
+	if(e != NULL){
+		while(e != list_end(&curr->child_list)){
+			struct child *c = list_entry(e, struct child, child_elem);
+			c->p_alive = false;
+			e = list_next(e);
+		}
+	}
+
+	/* 부모가 존재하면 정보 전달 */
+	if(curr->child_info->p_alive == true){
+		curr->child_info->exit_status = curr->exit_status;
+		sema_up(&curr->child_info->wait_sema);
+	}
+	/* 부모가 강제 exit 됐으면 자식이 child_info free */
+	else{
+		free(curr->child_info);
+	}
+	printf("%s: exit(%d)\n", curr->name, curr->exit_status);
 
 }
 
