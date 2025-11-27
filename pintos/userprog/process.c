@@ -37,11 +37,16 @@ static void
 process_init (void) {
 	struct thread *curr = thread_current ();
 	/* 프로세스에 필요한 구조체 여기서 만들어야함.*/
-	// initialize the fd_table
+	// initialize the fd_table + size
 	curr->fd_table = calloc(FD_TABLE_SIZE, sizeof(struct file *));
+	curr->fd_capacity = FD_TABLE_SIZE;
 	if (curr->fd_table == NULL) {
         PANIC("Failed to allocate file descriptor table");
 	}
+	// initialize the STD_IN and STD_OUT
+	curr->fd_table[0] = (struct file *) STDIN_FILENO;
+	curr->fd_table[1] = (struct file *) STDOUT_FILENO;
+
 }
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
@@ -285,21 +290,39 @@ __do_fork (void *aux) {
 	 * TODO:       the resources of parent.*/
 
 	process_init ();
+	// 먼저 자식의 fd_table을 부모 크기로 확장
+if (parent->fd_capacity > current->fd_capacity) {
+    struct file **new_table = realloc(current->fd_table,
+                                       sizeof(struct file *) * parent->fd_capacity);
+    if (new_table == NULL)
+        goto error;
 
+    // 새로 할당된 부분 초기화
+    for (int i = current->fd_capacity; i < parent->fd_capacity; i++) {
+        new_table[i] = NULL;
+    }
+
+    current->fd_table = new_table;
+    current->fd_capacity = parent->fd_capacity;
+}
 	/* fdt 복사, 나중에 fdt 타입 바꾸면 수정 필요 */
-	for (int i = 2; i < FD_TABLE_SIZE; i++) {
-		struct file *file = parent->fd_table[i];
-		if (file == NULL)
-			continue;
+	// 이제 부모의 fd_capacity까지 복사
+for (int i = 0; i < parent->fd_capacity; i++) {
+    struct file *file = parent->fd_table[i];
+    if (file == NULL)
+        continue;
+    if (file == (struct file *)STDIN_FILENO || file == (struct file *)STDOUT_FILENO){
+        current->fd_table[i] = file;
+        continue;
+    }
+    lock_acquire(&file_lock);
+    struct file *dup = file_duplicate(file);
+    lock_release(&file_lock);
+    if (dup == NULL)
+        goto error;
+    current->fd_table[i] = dup;
+}
 
-		lock_acquire(&file_lock);
-		struct file *dup = file_duplicate(file);
-		lock_release(&file_lock);
-		if (dup == NULL)
-			goto error;	//반환하면 안됨
-
-		current->fd_table[i] = dup; //dup한거 채우기
-	}
 
 	/* Finally, switch to the newly created process. */
 	if (succ){
@@ -457,15 +480,29 @@ process_exit (void) {
 
 	/* fdt 초기화 */
 	if (curr->fd_table != NULL) {
-        for (int i = 2; i < FD_TABLE_SIZE; i++) {
-            if (curr->fd_table[i] != NULL) {
-                lock_acquire(&file_lock);
-                file_close(curr->fd_table[i]);
-                lock_release(&file_lock);
+	for (int i = 2; i < curr->fd_capacity; i++) {
+        struct file *file = curr->fd_table[i];
+        if (file != NULL &&
+            file != (struct file *) STDIN_FILENO &&
+            file != (struct file *) STDOUT_FILENO) {
+
+            // 다른 fd가 같은 파일을 가리키는지 체크
+            bool should_close = true;
+            for (int j = i + 1; j < curr->fd_capacity; j++) {
+                if (curr->fd_table[j] == file) {
+                    curr->fd_table[j] = NULL;  // 중복 제거
+                }
             }
+
+            lock_acquire(&file_lock);
+            file_close(file);
+            lock_release(&file_lock);
         }
+        curr->fd_table[i] = NULL;
+    }
         free(curr->fd_table);
 	}
+
 
 	process_cleanup ();
 
@@ -476,7 +513,7 @@ process_exit (void) {
 	}
 
 	if (curr->executable) {
-	    lock_acquire(&file_lock);
+        lock_acquire(&file_lock);
         file_allow_write(curr->executable);
         file_close(curr->executable);
         lock_release(&file_lock);
