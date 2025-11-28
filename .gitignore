@@ -15,12 +15,10 @@
 *.dump
 *.dsk
 *.txt
-.devcontainer/Dockerfile
 .vscode
 *.md
 *.clangd
 *.clangd-format
-*.yml
 
 # 빌드 디렉터리
 build/
