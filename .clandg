@@ -1,0 +1,37 @@
+CompileFlags:
+  Add:
+    # Pintos 프로젝트 루트
+    - -I/workspaces/jungle-week12-13/pintos
+    # 표준 include 디렉토리들
+    - -I/workspaces/jungle-week12-13/pintos/include
+    - -I/workspaces/jungle-week12-13/pintos/include/lib
+    - -I/workspaces/jungle-week12-13/pintos/include/lib/kernel
+    - -I/workspaces/jungle-week12-13/pintos/include/lib/user
+    # 현재 디렉토리 (userprog 등)
+    - -I.
+    # C 파일로 명시적으로 지정 (Objective-C++ 오류 방지)
+    - -x
+    - c
+    # C 표준 설정 (C99 - _Bool 타입 지원)
+    - -std=c99
+    # Pintos 특수 컴파일 플래그들
+    - -msoft-float
+    - -mcmodel=large
+    - -fno-plt
+    - -fno-pic
+    - -mno-sse
+    - -nostdinc
+    # 표준 타입 정의를 위한 플래그
+    - -D__STDC_VERSION__=199901L
+    - -D_GNU_SOURCE
+    # Pintos 프로젝트 매크로들
+    - -DUSERPROG
+    - -DFILESYS
+    # -DVM  # VM 프로젝트 작업 시 주석 해제
+  Remove:
+    # 기본 표준 라이브러리 경로는 제거 (nostdinc 사용)
+    - -I/usr/include
+    - -I/usr/local/include
+
+Diagnostics:
+  UnusedIncludes: None

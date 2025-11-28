@@ -16,9 +16,7 @@
 *.dsk
 *.txt
 .vscode
-*.md
-*.clangd
-*.clangd-format
+
 
 # 빌드 디렉터리
 build/
