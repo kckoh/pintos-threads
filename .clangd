@@ -27,7 +27,7 @@ CompileFlags:
     # Pintos 프로젝트 매크로들
     - -DUSERPROG
     - -DFILESYS
-    # -DVM  # VM 프로젝트 작업 시 주석 해제
+    - -DVM
   Remove:
     # 기본 표준 라이브러리 경로는 제거 (nostdinc 사용)
     - -I/usr/include

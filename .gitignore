@@ -14,9 +14,8 @@
 *.dis
 *.dump
 *.dsk
-*.txt
-.vscode
-
+*.drawio
+*.md
 
 # 빌드 디렉터리
 build/
