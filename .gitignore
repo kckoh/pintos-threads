@@ -35,3 +35,4 @@ core
 # vscode
 .vscode
 
+.clang-format
