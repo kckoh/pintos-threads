@@ -6,6 +6,7 @@
 #include "vm/uninit.h"
 #include "vm/vm_types.h"
 #include <stdbool.h>
+#include "lib/kernel/hash.h"
 #ifdef EFILESYS
 #include "filesys/page_cache.h"
 #endif
@@ -22,6 +23,9 @@ struct page
     const struct page_operations* operations;
     void* va;            /* Address in terms of user space */
     struct frame* frame; /* Back reference for frame */
+
+    /* Hash table element for supplemental page table */
+    struct hash_elem hash_elem;
 
     /* Your implementation */
 
@@ -67,6 +71,7 @@ struct page_operations
  * All designs up to you for this. */
 struct supplemental_page_table
 {
+    struct hash spt;
 };
 
 #include "threads/thread.h"

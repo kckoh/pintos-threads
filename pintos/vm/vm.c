@@ -1,7 +1,11 @@
 /* vm.c: Generic interface for virtual memory objects. */
 
+#include "hash.h"
 #include "threads/malloc.h"
+#include "threads/vaddr.h"
 #include "vm/vm.h"
+#include <stddef.h>
+#include <stdint.h>
 #include "vm/inspect.h"
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
@@ -64,25 +68,25 @@ err:
 /* Find VA from spt and return page. On error, return NULL. */
 struct page* spt_find_page(struct supplemental_page_table* spt UNUSED, void* va UNUSED)
 {
-    struct page* page = NULL;
-    /* TODO: Fill this function. */
-
-    return page;
+    ASSERT(spt != NULL);
+    struct page page;
+    page.va = pg_round_down(va);
+    struct hash_elem* hash_elem = hash_find(&spt->spt, &page.hash_elem);
+    return hash_elem != NULL ? hash_entry(hash_elem, struct page, hash_elem) : NULL;
 }
 
 /* Insert PAGE into spt with validation. */
 bool spt_insert_page(struct supplemental_page_table* spt UNUSED, struct page* page UNUSED)
 {
-    int succ = false;
-    /* TODO: Fill this function. */
-
-    return succ;
+    ASSERT(spt != NULL);
+    ASSERT(page != NULL);
+    return hash_insert(&spt->spt, &page->hash_elem) == NULL;
 }
 
 void spt_remove_page(struct supplemental_page_table* spt, struct page* page)
 {
     vm_dealloc_page(page);
-    return true;
+    // return true;
 }
 
 /* Get the struct frame, that will be evicted. */
@@ -167,8 +171,26 @@ static bool vm_do_claim_page(struct page* page)
     return swap_in(page, frame->kva);
 }
 
+/*페이지를 넣을때 어느 버킷에 넣을지 결정하는 함수*/
+static uint64_t hash_fun(const struct hash_elem* e, void* aux)
+{
+    struct page* page = hash_entry(e, struct page, hash_elem);
+    return hash_bytes(&page->va, sizeof page->va);
+}
+
+/*버킷 안에서의 순서를 결정하기 위해 페이지들을 비교해주는 함수*/
+static bool less_fun(const struct hash_elem* a, const struct hash_elem* b, void* aux)
+{
+    struct page* page_a = hash_entry(a, struct page, hash_elem);
+    struct page* page_b = hash_entry(b, struct page, hash_elem);
+    return (uintptr_t)page_a->va < (uintptr_t)page_b->va;
+}
+
 /* Initialize new supplemental page table */
-void supplemental_page_table_init(struct supplemental_page_table* spt UNUSED) {}
+void supplemental_page_table_init(struct supplemental_page_table* spt UNUSED)
+{
+    hash_init(&spt->spt, hash_fun, less_fun, NULL);
+}
 
 /* Copy supplemental page table from src to dst */
 bool supplemental_page_table_copy(struct supplemental_page_table* dst UNUSED,
