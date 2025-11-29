@@ -1,0 +1,23 @@
+# Standalone unit test Makefile
+
+CC = gcc
+CFLAGS = -Wall -Wextra -g -std=c99
+
+# Test executable
+TEST_EXEC = run-tests
+
+# Source files
+TEST_SRC = run-tests.c
+
+all: $(TEST_EXEC)
+
+$(TEST_EXEC): $(TEST_SRC)
+	$(CC) $(CFLAGS) -o $(TEST_EXEC) $(TEST_SRC)
+
+run: $(TEST_EXEC)
+	./$(TEST_EXEC)
+
+clean:
+	rm -f $(TEST_EXEC)
+
+.PHONY: all run clean
