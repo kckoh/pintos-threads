@@ -52,23 +52,23 @@ typedef bool hash_less_func(const struct hash_elem* a, const struct hash_elem* b
  * data AUX. */
 typedef void hash_action_func(struct hash_elem* e, void* aux);
 
-/* Hash table. */
+/* 해시 테이블. */
 struct hash
 {
-    size_t elem_cnt;      /* Number of elements in table. */
-    size_t bucket_cnt;    /* Number of buckets, a power of 2. */
-    struct list* buckets; /* Array of `bucket_cnt' lists. */
-    hash_hash_func* hash; /* Hash function. */
-    hash_less_func* less; /* Comparison function. */
-    void* aux;            /* Auxiliary data for `hash' and `less'. */
+    size_t elem_cnt;      /* 테이블에 저장된 요소의 개수. */
+    size_t bucket_cnt;    /* 버킷의 개수 (2의 거듭제곱). */
+    struct list* buckets; /* `bucket_cnt` 개의 리스트로 이루어진 배열. */
+    hash_hash_func* hash; /* 해시 함수. */
+    hash_less_func* less; /* 비교 함수. */
+    void* aux;            /* `hash`와 `less`에서 사용할 보조 데이터. */
 };
 
-/* A hash table iterator. */
+/* 해시 테이블 반복자 (Iterator). */
 struct hash_iterator
 {
-    struct hash* hash;      /* The hash table. */
-    struct list* bucket;    /* Current bucket. */
-    struct hash_elem* elem; /* Current hash element in current bucket. */
+    struct hash* hash;      /* 해시 테이블. */
+    struct list* bucket;    /* 현재 버킷. */
+    struct hash_elem* elem; /* 현재 버킷에 있는 현재 해시 요소. */
 };
 
 /* Basic life cycle. */
@@ -96,5 +96,8 @@ bool hash_empty(struct hash*);
 uint64_t hash_bytes(const void*, size_t);
 uint64_t hash_string(const char*);
 uint64_t hash_int(int);
+
+uint64_t page_hash(const struct hash_elem* e, void* aux);
+bool page_less(const struct hash_elem* a, const struct hash_elem* b, void* aux);
 
 #endif /* lib/kernel/hash.h */

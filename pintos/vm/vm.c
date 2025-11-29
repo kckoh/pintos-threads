@@ -3,6 +3,7 @@
 #include "threads/malloc.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
+#include "threads/mmu.h"
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -61,20 +62,26 @@ err:
     return false;
 }
 
-/* Find VA from spt and return page. On error, return NULL. */
+/* NOTE : spt_find */
 struct page* spt_find_page(struct supplemental_page_table* spt UNUSED, void* va UNUSED)
 {
-    struct page* page = NULL;
-    /* TODO: Fill this function. */
+    struct page page;
+    page.va = va;
 
-    return page;
+    struct hash_elem* result_elem = hash_find(&spt->hash_table, &page.hash_elem);
+    if (result_elem == NULL) return NULL;
+
+    struct page* result_page = hash_entry(result_elem, struct page, hash_elem);
+
+    return result_page;
 }
 
-/* Insert PAGE into spt with validation. */
+/* NOTE : spt_insert */
 bool spt_insert_page(struct supplemental_page_table* spt UNUSED, struct page* page UNUSED)
 {
     int succ = false;
-    /* TODO: Fill this function. */
+
+    if (!hash_insert(&spt->hash_table, &page->hash_elem)) succ = true;
 
     return succ;
 }
@@ -104,17 +111,19 @@ static struct frame* vm_evict_frame(void)
     return NULL;
 }
 
-/* palloc() and get frame. If there is no available page, evict the page
- * and return it. This always return valid address. That is, if the user pool
- * memory is full, this function evicts the frame to get the available memory
- * space.*/
+/* palloc()을 호출하여 프레임을 가져옵니다. 가용한 페이지가 없다면,
+ * 페이지를 축출(evict)하고 해당 프레임을 반환합니다.
+ * 이 함수는 항상 유효한 주소를 반환해야 합니다.
+ * 즉, 사용자 풀(user pool) 메모리가 가득 찼다면,
+ * 이 함수는 가용 메모리 공간을 확보하기 위해 프레임을 축출합니다. */
 static struct frame* vm_get_frame(void)
 {
-    struct frame* frame = NULL;
-    /* TODO: Fill this function. */
+    struct frame* frame = malloc(sizeof(struct frame));
+    if (frame == NULL) PANIC("todo -> swap_out");
 
-    ASSERT(frame != NULL);
-    ASSERT(frame->page == NULL);
+    frame->kva = palloc_get_page(PAL_USER);
+    frame->page = NULL;
+
     return frame;
 }
 
@@ -145,15 +154,19 @@ void vm_dealloc_page(struct page* page)
 }
 
 /* Claim the page that allocate on VA. */
+/* NOTE: vm_claim_page */
 bool vm_claim_page(void* va UNUSED)
 {
-    struct page* page = NULL;
-    /* TODO: Fill this function */
+    struct thread *curr = thread_current();
+
+    struct page *page = spt_find_page(&curr->spt, va);
+    if(page == NULL) return false;
 
     return vm_do_claim_page(page);
 }
 
 /* Claim the PAGE and set up the mmu. */
+/* NOTE: vm_do_claim_page */
 static bool vm_do_claim_page(struct page* page)
 {
     struct frame* frame = vm_get_frame();
@@ -162,13 +175,19 @@ static bool vm_do_claim_page(struct page* page)
     frame->page = page;
     page->frame = frame;
 
-    /* TODO: Insert page table entry to map page's VA to frame's PA. */
+    if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable)) return false;
 
     return swap_in(page, frame->kva);
 }
 
-/* Initialize new supplemental page table */
-void supplemental_page_table_init(struct supplemental_page_table* spt UNUSED) {}
+/* NOTE : spt_init */
+void supplemental_page_table_init(struct supplemental_page_table* spt UNUSED)
+{
+    if (!hash_init(&spt->hash_table, page_hash, page_less, NULL))
+    {
+        PANIC("Hash table initialization failed");
+    }
+}
 
 /* Copy supplemental page table from src to dst */
 bool supplemental_page_table_copy(struct supplemental_page_table* dst UNUSED,
