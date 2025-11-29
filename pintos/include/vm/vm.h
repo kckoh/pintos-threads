@@ -44,9 +44,9 @@ struct page {
 	const struct page_operations *operations;
 	void *va;              /* Address in terms of user space */
 	struct frame *frame;   /* Back reference for frame */
-
+	struct hash_elem elem; /* For Suppletmenal page table */
 	/* Your implementation */
-
+	bool writable;         /* Whether the page is writable  */
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
 	union {
@@ -85,7 +85,9 @@ struct page_operations {
  * We don't want to force you to obey any specific design for this struct.
  * All designs up to you for this. */
 struct supplemental_page_table {
+    struct hash spt;
 };
+
 
 #include "threads/thread.h"
 void supplemental_page_table_init (struct supplemental_page_table *spt);
