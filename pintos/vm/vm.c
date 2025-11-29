@@ -68,7 +68,8 @@ spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
     struct hash_elem *e;
 
 	/* TODO: Fill this function. */
-	p.va = va;
+	page.va = pg_round_down(va);
+
 	e = hash_find(&spt->spt, &p.elem);
 
     return e != NULL ? hash_entry(e, struct page, elem) : NULL;
@@ -174,9 +175,10 @@ vm_claim_page (void *va) {
 	struct page *page = NULL;
 
 	// Claims the page to allocate va. You will first need to get a page and then calls vm_do_claim_page with the page.
-	/* TODO: Fill this function */
 
 	page = spt_find_page(&thread_current()->spt, va);
+
+    if (!page) return false;
 
 	return vm_do_claim_page (page);
 }
