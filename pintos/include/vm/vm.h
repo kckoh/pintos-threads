@@ -26,6 +26,7 @@ struct page
 
     /* Hash table element for supplemental page table */
     struct hash_elem hash_elem;
+    bool writable;
 
     /* Your implementation */
 
@@ -45,8 +46,8 @@ struct page
 /* The representation of "frame" */
 struct frame
 {
-    void* kva;
-    struct page* page;
+    void* kva;          // 물리 페이지 주소 (kernel virtual address)
+    struct page* page;  // 이 프레임을 사용하는 page
 };
 
 /* The function table for page operations.

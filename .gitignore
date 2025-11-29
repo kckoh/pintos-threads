@@ -16,6 +16,8 @@
 *.dsk
 *.drawio
 *.md
+*.sh
+*.json
 
 # 빌드 디렉터리
 build/
@@ -23,6 +25,7 @@ build/
 /obj/
 /output/
 threads/build/os.dsk
+.cache
 
 # core dump
 core
