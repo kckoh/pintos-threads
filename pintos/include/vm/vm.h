@@ -2,6 +2,7 @@
 #define VM_VM_H
 #include "threads/palloc.h"
 #include <stdbool.h>
+#include "lib/kernel/hash.h"
 
 enum vm_type {
   /* page not initialized */

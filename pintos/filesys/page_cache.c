@@ -21,19 +21,23 @@ void pagecache_init(void) {
 }
 
 /* Initialize the page cache */
-bool page_cache_initializer(struct page *page, enum vm_type type, void *kva) {
+bool page_cache_initializer(struct page *page, enum vm_type type UNUSED,
+                             void *kva UNUSED) {
   /* Set up the handler */
   page->operations = &page_cache_op;
+  return true;
 }
 
 /* Utilze the Swap in mechanism to implement readhead */
-static bool page_cache_readahead(struct page *page, void *kva) {}
+static bool page_cache_readahead(struct page *page UNUSED, void *kva UNUSED) {
+  return false;
+}
 
 /* Utilze the Swap out mechanism to implement writeback */
-static bool page_cache_writeback(struct page *page) {}
+static bool page_cache_writeback(struct page *page UNUSED) { return false; }
 
 /* Destory the page_cache. */
-static void page_cache_destroy(struct page *page) {}
+static void page_cache_destroy(struct page *page UNUSED) {}
 
 /* Worker thread for page cache */
-static void page_cache_kworkerd(void *aux) {}
+static void page_cache_kworkerd(void *aux UNUSED) {}
