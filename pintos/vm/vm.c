@@ -38,6 +38,8 @@ static struct frame *vm_evict_frame(void);
 /* Create the pending page object with initializer. If you want to create a
  * page, do not create it directly and make it through this function or
  * `vm_alloc_page`. */
+/* 초기화 함수와 함께 대기 중인 페이지 객체를 생성. 페이지를 생성하려면
+ * 직접 생성하지 말고 이 함수나 `vm_alloc_page`를 통해 생성해야 함. */
 bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writable,
                                     vm_initializer *init, void *aux) {
 
@@ -46,12 +48,39 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
     struct supplemental_page_table *spt = &thread_current()->spt;
 
     /* Check wheter the upage is already occupied or not. */
+    /* upage가 이미 사용 중인지 확인 */
     if (spt_find_page(spt, upage) == NULL) {
         /* TODO: Create the page, fetch the initialier according to the VM type,
          * TODO: and then create "uninit" page struct by calling uninit_new. You
          * TODO: should modify the field after calling the uninit_new. */
+        /* TODO: 페이지를 생성하고, VM 타입에 따라 초기화 함수를 가져온 다음,
+         * TODO: uninit_new를 호출하여 "uninit" 페이지 구조체를 생성.
+         * TODO: uninit_new 호출 후 필드를 수정해야 함. */
 
+        struct page *page = malloc(sizeof(struct page));
+        if (page == NULL)
+            goto err;
+
+        bool (*page_initializer)(struct page *, enum vm_type, void *);
+        switch (VM_TYPE(type)) {
+        case VM_ANON:
+            page_initializer = anon_initializer;
+            break;
+        case VM_FILE:
+            page_initializer = file_backed_initializer;
+            break;
+        default:
+            free(page);
+            goto err;
+        }
+
+        uninit_new(page, upage, init, type, aux, page_initializer);
+
+        page->writable = writable;
+
+        return spt_insert_page(spt, page);
         /* TODO: Insert the page into the spt. */
+        /* TODO: 페이지를 spt에 삽입 */
     }
 err:
     return false;
@@ -63,7 +92,7 @@ struct page *spt_find_page(struct supplemental_page_table *spt UNUSED, void *va 
     struct hash_elem *e;
 
     /* TODO: Fill this function. */
-    page.va = pg_round_down(va);
+    p.va = pg_round_down(va);
 
     e = hash_find(&spt->spt, &p.elem);
 
@@ -80,7 +109,7 @@ bool spt_insert_page(struct supplemental_page_table *spt UNUSED, struct page *pa
 
 void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
     vm_dealloc_page(page);
-    return true;
+    // return true;
 }
 
 /* Get the struct frame, that will be evicted. */
