@@ -1,8 +1,0 @@
--nostdinc
--I/workspaces/jungle-week12-13/pintos
--I/workspaces/jungle-week12-13/pintos/include/lib
--I/workspaces/jungle-week12-13/pintos/include
--I/workspaces/jungle-week12-13/pintos/include/lib/kernel
--DUSERPROG
--DFILESYS
--DVM
