@@ -27,8 +27,7 @@ int puts(const char *);
 void hex_dump(uintptr_t ofs, const void *, size_t size, bool ascii);
 
 /* Internal functions. */
-void __vprintf(const char *format, va_list args, void (*output)(char, void *),
-               void *aux);
+void __vprintf(const char *format, va_list args, void (*output)(char, void *), void *aux);
 void __printf(const char *format, void (*output)(char, void *), void *aux, ...);
 
 /* Try to be helpful. */

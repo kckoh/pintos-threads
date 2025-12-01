@@ -5,6 +5,6 @@
 #include <syscall.h>
 
 void test_main(void) {
-  msg("I'm your father");
-  exec("child-simple");
+    msg("I'm your father");
+    exec("child-simple");
 }

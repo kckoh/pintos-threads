@@ -8,6 +8,6 @@
 #include <stdio.h>
 
 void test_alarm_negative(void) {
-  timer_sleep(-100);
-  pass();
+    timer_sleep(-100);
+    pass();
 }

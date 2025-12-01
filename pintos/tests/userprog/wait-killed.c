@@ -5,10 +5,10 @@
 #include <syscall.h>
 
 void test_main(void) {
-  pid_t child;
-  if ((child = fork("child-bad"))) {
-    msg("wait(exec()) = %d", wait(child));
-  } else {
-    exec("child-bad");
-  }
+    pid_t child;
+    if ((child = fork("child-bad"))) {
+        msg("wait(exec()) = %d", wait(child));
+    } else {
+        exec("child-bad");
+    }
 }

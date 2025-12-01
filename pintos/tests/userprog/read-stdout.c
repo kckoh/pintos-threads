@@ -7,6 +7,6 @@
 #include <syscall.h>
 
 void test_main(void) {
-  char buf;
-  read(STDOUT_FILENO, &buf, 1);
+    char buf;
+    read(STDOUT_FILENO, &buf, 1);
 }

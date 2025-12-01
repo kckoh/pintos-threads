@@ -24,8 +24,7 @@ void fat_close(void);
 void fat_create(void);
 void fat_close(void);
 
-cluster_t fat_create_chain(
-    cluster_t clst /* Cluster # to stretch, 0: Create a new chain */
+cluster_t fat_create_chain(cluster_t clst /* Cluster # to stretch, 0: Create a new chain */
 );
 void fat_remove_chain(cluster_t clst, /* Cluster # to be removed */
                       cluster_t pclst /* Previous cluster of clst, 0: clst is

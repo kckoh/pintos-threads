@@ -17,24 +17,25 @@ tid_t page_cache_workerd;
 
 /* The initializer of file vm */
 void pagecache_init(void) {
-  /* TODO: Create a worker daemon for page cache with page_cache_kworkerd */
+    /* TODO: Create a worker daemon for page cache with page_cache_kworkerd */
 }
 
 /* Initialize the page cache */
-bool page_cache_initializer(struct page *page, enum vm_type type UNUSED,
-                             void *kva UNUSED) {
-  /* Set up the handler */
-  page->operations = &page_cache_op;
-  return true;
+bool page_cache_initializer(struct page *page, enum vm_type type UNUSED, void *kva UNUSED) {
+    /* Set up the handler */
+    page->operations = &page_cache_op;
+    return true;
 }
 
 /* Utilze the Swap in mechanism to implement readhead */
 static bool page_cache_readahead(struct page *page UNUSED, void *kva UNUSED) {
-  return false;
+    return false;
 }
 
 /* Utilze the Swap out mechanism to implement writeback */
-static bool page_cache_writeback(struct page *page UNUSED) { return false; }
+static bool page_cache_writeback(struct page *page UNUSED) {
+    return false;
+}
 
 /* Destory the page_cache. */
 static void page_cache_destroy(struct page *page UNUSED) {}

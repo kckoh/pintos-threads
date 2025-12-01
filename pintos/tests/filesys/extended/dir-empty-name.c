@@ -5,4 +5,6 @@
 #include "tests/main.h"
 #include <syscall.h>
 
-void test_main(void) { CHECK(!mkdir(""), "mkdir \"\" (must return false)"); }
+void test_main(void) {
+    CHECK(!mkdir(""), "mkdir \"\" (must return false)");
+}

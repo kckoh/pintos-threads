@@ -5,4 +5,6 @@
 #include <stddef.h>
 #include <syscall.h>
 
-void test_main(void) { open(NULL); }
+void test_main(void) {
+    open(NULL);
+}

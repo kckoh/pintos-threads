@@ -4,4 +4,6 @@
 #include "tests/main.h"
 #include <syscall.h>
 
-void test_main(void) { wait((pid_t)0x0c020301); }
+void test_main(void) {
+    wait((pid_t)0x0c020301);
+}
