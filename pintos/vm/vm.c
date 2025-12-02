@@ -3,6 +3,8 @@
 #include "vm/vm.h"
 #include "threads/malloc.h"
 #include "vm/inspect.h"
+#include "vm/uninit.h"
+#include "threads/vaddr.h"
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -41,17 +43,40 @@ static struct frame *vm_evict_frame(void);
 bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writable,
                                     vm_initializer *init, void *aux) {
 
-    ASSERT(VM_TYPE(type) != VM_UNINIT)
+    ASSERT(VM_TYPE(type) != VM_UNINIT);
 
     struct supplemental_page_table *spt = &thread_current()->spt;
 
     /* Check wheter the upage is already occupied or not. */
     if (spt_find_page(spt, upage) == NULL) {
-        /* TODO: Create the page, fetch the initialier according to the VM type,
-         * TODO: and then create "uninit" page struct by calling uninit_new. You
-         * TODO: should modify the field after calling the uninit_new. */
 
-        /* TODO: Insert the page into the spt. */
+        struct page *p = malloc(sizeof(struct page));
+        if (p == NULL)
+            goto err;
+
+        bool (*page_initializer)(struct page *, enum vm_type, void *kva);
+        switch (VM_TYPE(type)) {
+        case VM_FILE:
+            page_initializer = file_backed_initializer;
+            break;
+        case VM_ANON:
+            page_initializer = anon_initializer;
+            break;
+        default:
+            free(p);
+            goto err;
+        }
+
+        uninit_new(p, upage, init, type, aux, page_initializer);
+
+        p->writable = writable;
+
+        if (!spt_insert_page(spt, p)) {
+            free(p);
+            goto err;
+        }
+
+        return true;
     }
 err:
     return false;
@@ -63,7 +88,7 @@ struct page *spt_find_page(struct supplemental_page_table *spt UNUSED, void *va 
     struct hash_elem *e;
 
     /* TODO: Fill this function. */
-    page.va = pg_round_down(va);
+    p.va = pg_round_down(va);
 
     e = hash_find(&spt->spt, &p.elem);
 
@@ -80,7 +105,6 @@ bool spt_insert_page(struct supplemental_page_table *spt UNUSED, struct page *pa
 
 void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
     vm_dealloc_page(page);
-    return true;
 }
 
 /* Get the struct frame, that will be evicted. */
@@ -117,7 +141,7 @@ static struct frame *vm_get_frame(void) {
     if (!frame->kva) {
         // TODO: do eviction later
         free(frame);
-        PANIC("todo");
+        PANIC("OUT OF MEMORY");
     }
 
     frame->page = NULL;
@@ -134,12 +158,16 @@ static void vm_stack_growth(void *addr UNUSED) {}
 static bool vm_handle_wp(struct page *page UNUSED) {}
 
 /* Return true on success */
-bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool user UNUSED,
-                         bool write UNUSED, bool not_present UNUSED) {
-    struct supplemental_page_table *spt UNUSED = &thread_current()->spt;
+bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write,
+                         bool not_present) {
+
+    struct supplemental_page_table *spt = &thread_current()->spt;
     struct page *page = NULL;
-    /* TODO: Validate the fault */
-    /* TODO: Your code goes here */
+
+    page = spt_find_page(spt, addr);
+    if (page == NULL) {
+        return false;
+    }
 
     return vm_do_claim_page(page);
 }
@@ -184,7 +212,7 @@ static bool vm_do_claim_page(struct page *page) {
 }
 
 /* Hash function for supplemental page table */
-static unsigned page_hash(const struct hash_elem *e, void *aux UNUSED) {
+static uint64_t page_hash(const struct hash_elem *e, void *aux UNUSED) {
     const struct page *p = hash_entry(e, struct page, elem);
     return hash_bytes(&p->va, sizeof(p->va));
 }
@@ -203,7 +231,9 @@ void supplemental_page_table_init(struct supplemental_page_table *spt) {
 
 /* Copy supplemental page table from src to dst */
 bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED,
-                                  struct supplemental_page_table *src UNUSED) {}
+                                  struct supplemental_page_table *src UNUSED) {
+    return true;
+}
 
 /* Free the resource hold by the supplemental page table */
 void supplemental_page_table_kill(struct supplemental_page_table *spt UNUSED) {

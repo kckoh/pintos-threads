@@ -8,8 +8,8 @@
  * function.
  * */
 
-#include "vm/uninit.h"
 #include "vm/vm.h"
+#include "vm/uninit.h"
 
 static bool uninit_initialize(struct page *page, void *kva);
 static void uninit_destroy(struct page *page);
@@ -46,7 +46,6 @@ static bool uninit_initialize(struct page *page, void *kva) {
     vm_initializer *init = uninit->init;
     void *aux = uninit->aux;
 
-    /* TODO: You may need to fix this function. */
     return uninit->page_initializer(page, uninit->type, kva) && (init ? init(page, aux) : true);
 }
 
