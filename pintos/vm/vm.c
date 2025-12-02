@@ -1,6 +1,7 @@
 /* vm.c: Generic interface for virtual memory objects. */
 
 #include "vm/vm.h"
+#include "hash.h"
 #include "threads/malloc.h"
 #include "vm/inspect.h"
 #include "vm/uninit.h"
@@ -230,8 +231,41 @@ void supplemental_page_table_init(struct supplemental_page_table *spt) {
 }
 
 /* Copy supplemental page table from src to dst */
-bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED,
-                                  struct supplemental_page_table *src UNUSED) {
+bool supplemental_page_table_copy(struct supplemental_page_table *dst,
+                                  struct supplemental_page_table *src) {
+
+    struct hash *p_spt_hash = &src->spt;
+    struct hash_iterator parent_iterator;
+
+    hash_first(&parent_iterator, p_spt_hash);
+
+    while (hash_next(&parent_iterator)) {
+        struct hash_elem *p_elem = hash_cur(&parent_iterator);
+        struct page *p_page = hash_entry(p_elem, struct page, elem);
+        enum vm_type type = page_get_type(p_page);
+        vm_initializer *init;
+        void *aux;
+
+        if (type == VM_TYPE(VM_UNINIT)) {
+            init = p_page->uninit.init;
+            aux = p_page->uninit.aux;
+            type = p_page->uninit.type;
+        } else {
+            init = NULL;
+            aux = NULL;
+        }
+
+        if (!vm_alloc_page_with_initializer(type, p_page->va, p_page->writable, init, aux))
+            return false;
+
+        if (type != VM_TYPE(VM_UNINIT)) {
+            if (!vm_claim_page(p_page->va))
+                return false;
+            struct page *c_page = spt_find_page(dst, p_page->va);
+            memcpy(c_page->frame->kva, p_page->frame->kva, PGSIZE);
+        }
+    }
+
     return true;
 }
 
