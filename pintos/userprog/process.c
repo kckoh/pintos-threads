@@ -22,7 +22,7 @@
 #include "vm/vm.h"
 #endif
 
-#include "include/threads/synch.h"
+#include "threads/synch.h"
 #include <list.h>
 
 static void process_cleanup(void);

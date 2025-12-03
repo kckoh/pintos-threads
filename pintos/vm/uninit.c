@@ -62,14 +62,9 @@ static bool uninit_initialize(struct page *page, void *kva) {
  * PAGE 자체는 호출자가 해제합니다. */
 static void uninit_destroy(struct page *page) {
     struct uninit_page *uninit = &page->uninit;
-    struct lazy_load_aux *aux = (struct lazy_load_aux *)uninit->aux;
     /* TODO: Fill this function.
      * TODO: If you don't have anything to do, just return. */
 
-    if (uninit->aux != NULL) {
-        lock_acquire(&file_lock);
-        file_close(aux->file);
-        lock_release(&file_lock);
-        free(aux);
-    }
+    if (uninit->aux != NULL)
+        free(uninit->aux);
 }
