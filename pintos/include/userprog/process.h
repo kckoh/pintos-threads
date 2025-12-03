@@ -10,4 +10,14 @@ int process_wait(tid_t);
 void process_exit(void);
 void process_activate(struct thread *next);
 
+struct file;
+struct page;
+
+struct lazy_load_aux {
+    struct file *file;      // 읽어야 되는 파일
+    off_t ofs;              // 시작 위치 오프셋
+    size_t page_read_bytes; // 읽을 크기
+    size_t page_zero_bytes; // 나머지 크기
+};
+
 #endif /* userprog/process.h */

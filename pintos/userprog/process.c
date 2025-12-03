@@ -395,6 +395,9 @@ int process_exec(void *f_name) {
 
     /* We first kill the current context */
     process_cleanup();
+#ifdef VM
+    supplemental_page_table_init(&thread_current()->spt);
+#endif
     /* And then load the binary */
     success = load(argv, argc, &_if);
 
@@ -853,11 +856,25 @@ static bool install_page(void *upage, void *kpage, bool writable) {
 /* From here, codes will be used after project 3.
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
+/* 여기부터는 프로젝트 3 이후에 사용될 코드.
+ * 프로젝트 2만을 위한 함수를 구현하려면 위 블록에 구현. */
 
 static bool lazy_load_segment(struct page *page, void *aux) {
     /* TODO: Load the segment from the file */
     /* TODO: This called when the first page fault occurs on address VA. */
     /* TODO: VA is available when calling this function. */
+    /* TODO: 파일로부터 세그먼트를 로드 */
+    /* TODO: 주소 VA에서 첫 번째 페이지 폴트가 발생할 때 호출됨. */
+    /* TODO: 이 함수 호출 시 VA를 사용할 수 있음. */
+    struct lazy_load_aux *arg = (struct lazy_load_aux *)aux;
+    off_t read_bytes = file_read_at(arg->file, page->frame->kva, arg->page_read_bytes, arg->ofs);
+    if (read_bytes != (int)arg->page_read_bytes) {
+        free(aux);
+        return false;
+    }
+    memset(page->frame->kva + arg->page_read_bytes, 0, arg->page_zero_bytes);
+    free(aux);
+    return true;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -874,6 +891,18 @@ static bool lazy_load_segment(struct page *page, void *aux) {
  *
  * Return true if successful, false if a memory allocation error
  * or disk read error occurs. */
+/* FILE의 오프셋 OFS부터 시작하는 세그먼트를 주소 UPAGE에 로드.
+ * 총 READ_BYTES + ZERO_BYTES 바이트의 가상 메모리가 다음과 같이 초기화됨:
+ *
+ * - UPAGE의 READ_BYTES 바이트는 FILE의 오프셋 OFS부터 읽어야 함.
+ *
+ * - UPAGE + READ_BYTES의 ZERO_BYTES 바이트는 0으로 채워야 함.
+ *
+ * 이 함수로 초기화된 페이지는 WRITABLE이 true면 사용자 프로세스가 쓰기 가능,
+ * 그렇지 않으면 읽기 전용.
+ *
+ * 성공 시 true 반환, 메모리 할당 오류나 디스크 읽기 오류 발생 시 false 반환. */
+
 static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes,
                          uint32_t zero_bytes, bool writable) {
     ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
@@ -884,15 +913,30 @@ static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t 
         /* Do calculate how to fill this page.
          * We will read PAGE_READ_BYTES bytes from FILE
          * and zero the final PAGE_ZERO_BYTES bytes. */
+        /* 이 페이지를 채우는 방법 계산.
+         * FILE로부터 PAGE_READ_BYTES 바이트를 읽고
+         * 마지막 PAGE_ZERO_BYTES 바이트는 0으로 채움. */
         size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
         size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
         /* TODO: Set up aux to pass information to the lazy_load_segment. */
-        void *aux = NULL;
-        if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable, lazy_load_segment, aux))
+        /* TODO: lazy_load_segment에 정보를 전달하기 위해 aux 설정 */
+        struct lazy_load_aux *aux = malloc(sizeof(struct lazy_load_aux));
+        if (!aux)
             return false;
+        aux->file = file;
+        aux->ofs = ofs;
+        aux->page_read_bytes = page_read_bytes;
+        aux->page_zero_bytes = page_zero_bytes;
+
+        if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable, lazy_load_segment, aux)) {
+            free(aux);
+            return false;
+        }
 
         /* Advance. */
+        /* 다음으로 진행 */
+        ofs += page_read_bytes;
         read_bytes -= page_read_bytes;
         zero_bytes -= page_zero_bytes;
         upage += PGSIZE;
@@ -901,15 +945,24 @@ static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t 
 }
 
 /* Create a PAGE of stack at the USER_STACK. Return true on success. */
+/* USER_STACK에 스택 페이지 생성. 성공 시 true 반환. */
 static bool setup_stack(struct intr_frame *if_) {
-    bool success = false;
     void *stack_bottom = (void *)(((uint8_t *)USER_STACK) - PGSIZE);
 
     /* TODO: Map the stack on stack_bottom and claim the page immediately.
      * TODO: If success, set the rsp accordingly.
      * TODO: You should mark the page is stack. */
+    /* TODO: stack_bottom에 스택을 매핑하고 즉시 페이지를 요청.
+     * TODO: 성공하면 rsp를 적절히 설정.
+     * TODO: 페이지를 스택으로 표시해야 함. */
     /* TODO: Your code goes here */
+    if (!vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, true))
+        return false;
 
-    return success;
+    if (!vm_claim_page(stack_bottom))
+        return false;
+    if_->rsp = USER_STACK;
+
+    return true;
 }
 #endif /* VM */
