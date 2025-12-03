@@ -55,9 +55,13 @@ static bool uninit_initialize(struct page *page, void *kva) {
  * PAGE will be freed by the caller. */
 static void uninit_destroy(struct page *page) {
     struct uninit_page *uninit = &page->uninit;
+    struct lazy_load_info *info = uninit->aux;
 
-    if (uninit->type == VM_TYPE(VM_FILE)) {
-        free(uninit->aux);
-    } else if (uninit->type == VM_TYPE(VM_ANON)) {
+    if (uninit->type == VM_TYPE(VM_ANON)) {
+        if (info != NULL) {
+            file_close(info->file);
+            free(info);
+        }
+    } else if (uninit->type == VM_TYPE(VM_FILE)) {
     }
 }
