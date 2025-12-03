@@ -18,12 +18,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef VM
 #include "vm/vm.h"
-// #ifdef VM
-// #include "vm/vm.h"
-// #endif
+#endif
 
-#include "include/threads/synch.h"
+#include "threads/synch.h"
 #include <list.h>
 
 static void process_cleanup(void);
@@ -618,6 +617,10 @@ static bool load(const char **argv, int argc, struct intr_frame *if_) {
         goto done;
     process_activate(thread_current());
 
+#ifdef VM
+    supplemental_page_table_init(&t->spt);
+#endif
+
     /* Open executable file. */
     file = filesys_open(argv[0]);
 
@@ -856,13 +859,6 @@ static bool install_page(void *upage, void *kpage, bool writable) {
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
 
-struct lazy_load_info {
-    struct file *file;
-    off_t ofs;
-    uint32_t read_bytes;
-    uint32_t zero_bytes;
-};
-
 static bool lazy_load_segment(struct page *page, void *aux) {
 
     struct lazy_load_info *info = (struct lazy_load_info *)aux;
@@ -923,6 +919,8 @@ static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t 
 
         lock_acquire(&file_lock);
         info->file = file_reopen(file);
+        if (info->file == NULL)
+            return false;
         lock_release(&file_lock);
         info->ofs = ofs;
         info->read_bytes = page_read_bytes;

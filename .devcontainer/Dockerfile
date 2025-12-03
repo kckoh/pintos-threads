@@ -18,6 +18,8 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
     sudo \
     qemu-system-x86 \
     python3 \
+    python3-pip \
+    wget \
     && locale-gen ko_KR.UTF-8 && update-locale LANG=ko_KR.UTF-8 
 # && apt-get clean \
 # && rm -rf /var/lib/apt/lists/*

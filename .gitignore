@@ -34,4 +34,4 @@ core
 
 # vscode
 .vscode
-
+.clangd

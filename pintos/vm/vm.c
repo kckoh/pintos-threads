@@ -1,11 +1,16 @@
 /* vm.c: Generic interface for virtual memory objects. */
 
 #include "vm/vm.h"
+#include "filesys/file.h"
 #include "hash.h"
 #include "threads/malloc.h"
+#include "threads/synch.h"
 #include "vm/inspect.h"
 #include "vm/uninit.h"
 #include "threads/vaddr.h"
+#include "userprog/syscall.h"
+
+extern struct lock file_lock;
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -247,30 +252,53 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst,
         void *aux;
 
         if (type == VM_TYPE(VM_UNINIT)) {
-            init = p_page->uninit.init;
-            aux = p_page->uninit.aux;
+            struct lazy_load_info *p_info = p_page->uninit.aux;
+            struct lazy_load_info *c_info = malloc(sizeof(struct lazy_load_info));
+            if (c_info == NULL)
+                return false;
+
+            lock_acquire(&file_lock);
+            c_info->file = file_reopen(p_info->file);
+            lock_release(&file_lock);
+            c_info->ofs = p_info->ofs;
+            c_info->read_bytes = p_info->read_bytes;
+            c_info->zero_bytes = p_info->zero_bytes;
+
             type = p_page->uninit.type;
+            init = p_page->uninit.init;
+            aux = c_info;
         } else {
             init = NULL;
             aux = NULL;
         }
 
-        if (!vm_alloc_page_with_initializer(type, p_page->va, p_page->writable, init, aux))
+        if (!vm_alloc_page_with_initializer(type, p_page->va, p_page->writable, init, aux)) {
+            if (type == VM_TYPE(VM_UNINIT))
+                free(aux);
             return false;
+        }
 
         if (type != VM_TYPE(VM_UNINIT)) {
-            if (!vm_claim_page(p_page->va))
-                return false;
-            struct page *c_page = spt_find_page(dst, p_page->va);
-            memcpy(c_page->frame->kva, p_page->frame->kva, PGSIZE);
+            if (p_page->frame != NULL) {
+                if (!vm_claim_page(p_page->va))
+                    return false;
+                struct page *c_page = spt_find_page(dst, p_page->va);
+                if (c_page == NULL || c_page->frame == NULL)
+                    return false;
+                memcpy(c_page->frame->kva, p_page->frame->kva, PGSIZE);
+            }
         }
     }
 
     return true;
 }
 
+static void hash_page_destroy(struct hash_elem *d_elem, void *aux) {
+    struct page *d_page = hash_entry(d_elem, struct page, elem);
+    destroy(d_page);
+}
+
 /* Free the resource hold by the supplemental page table */
-void supplemental_page_table_kill(struct supplemental_page_table *spt UNUSED) {
-    /* TODO: Destroy all the supplemental_page_table hold by thread and
-     * TODO: writeback all the modified contents to the storage. */
+void supplemental_page_table_kill(struct supplemental_page_table *spt) {
+    hash_destroy(&spt->spt, hash_page_destroy);
 }
