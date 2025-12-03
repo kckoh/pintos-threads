@@ -9,8 +9,10 @@
  * */
 
 #include "vm/uninit.h"
+#include "threads/synch.h"
 #include "vm/vm.h"
 
+extern struct lock file_lock;
 static bool uninit_initialize(struct page *page, void *kva);
 static void uninit_destroy(struct page *page);
 
@@ -59,11 +61,15 @@ static bool uninit_initialize(struct page *page, void *kva) {
  * 페이지가 존재할 수 있습니다.
  * PAGE 자체는 호출자가 해제합니다. */
 static void uninit_destroy(struct page *page) {
-    struct uninit_page *uninit UNUSED = &page->uninit;
+    struct uninit_page *uninit = &page->uninit;
+    struct lazy_load_aux *aux = (struct lazy_load_aux *)uninit->aux;
     /* TODO: Fill this function.
      * TODO: If you don't have anything to do, just return. */
 
     if (uninit->aux != NULL) {
-        free(uninit->aux);
+        lock_acquire(&file_lock);
+        file_close(aux->file);
+        lock_release(&file_lock);
+        free(aux);
     }
 }

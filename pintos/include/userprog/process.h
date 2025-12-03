@@ -20,6 +20,4 @@ struct lazy_load_aux {
     size_t page_zero_bytes; // 나머지 크기
 };
 
-bool lazy_load_segment(struct page *page, void *aux);
-
 #endif /* userprog/process.h */

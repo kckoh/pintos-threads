@@ -15,6 +15,9 @@
 *.dump
 *.dsk
 *.zip
+*.devcontainer
+*.clangd
+*.test_status
 
 # 빌드 디렉터리
 build/

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include "vm/vm.h"
 #include <string.h>
+#include "threads/synch.h"
 #include "vm/anon.h"
 #include "vm/file.h"
 #include "vm/uninit.h"
@@ -13,6 +14,9 @@
 #include "threads/vaddr.h"
 #include "threads/mmu.h"
 #include "vm/inspect.h"
+#include "vm/vm_type.h"
+
+extern struct lock file_lock;
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -88,10 +92,12 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 
         page->writable = writable;
 
-        return spt_insert_page(spt, page);
-        /* TODO: Insert the page into the spt. */
-        /* TODO: 페이지를 spt에 삽입 */
+        if (!spt_insert_page(spt, page)) {
+            free(page);
+            goto err;
+        }
     }
+    return true;
 err:
     return false;
 }
@@ -119,7 +125,6 @@ bool spt_insert_page(struct supplemental_page_table *spt UNUSED, struct page *pa
 
 void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
     vm_dealloc_page(page);
-    // return true;
 }
 
 /* Get the struct frame, that will be evicted. */
@@ -183,9 +188,6 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
     /* TODO: Your code goes here */
     struct page *page = spt_find_page(spt, addr);
     if (!page)
-        return false;
-
-    if (write && !page->writable)
         return false;
 
     return vm_do_claim_page(page);
@@ -268,7 +270,9 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst,
                     return false;
 
                 memcpy(new_aux, old_aux, sizeof(struct lazy_load_aux));
+                lock_acquire(&file_lock);
                 new_aux->file = file_reopen(old_aux->file);
+                lock_release(&file_lock);
                 aux = new_aux;
             }
 
@@ -291,10 +295,12 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst,
             return false;
         }
 
-        if (page->frame != NULL) {
-            if (!vm_claim_page(page->va))
-                return false;
-            memcpy(spt_find_page(dst, page->va)->frame->kva, page->frame->kva, PGSIZE);
+        if (page->operations->type != VM_UNINIT) {
+            if (page->frame != NULL) {
+                if (!vm_claim_page(page->va))
+                    return false;
+                memcpy(spt_find_page(dst, page->va)->frame->kva, page->frame->kva, PGSIZE);
+            }
         }
     }
     return true;
@@ -303,12 +309,8 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst,
 void page_destructor(struct hash_elem *e, void *aux UNUSED) {
     struct page *page = hash_entry(e, struct page, elem);
 
-    // 페이지의 destroy 함수 호출 (operations->destroy)
-    if (page->operations && page->operations->destroy)
-        (page->operations->destroy)(page);
-
-    // 페이지 구조체 메모리 해제
-    free(page);
+    // 페이지의 destroy 함수 호출
+    vm_dealloc_page(page);
 }
 
 /* Free the resource hold by the supplemental page table */
