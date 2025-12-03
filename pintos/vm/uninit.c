@@ -8,9 +8,11 @@
  * function.
  * */
 
+#include "threads/synch.h"
 #include "vm/vm.h"
 #include "vm/uninit.h"
 
+extern struct lock file_lock;
 static bool uninit_initialize(struct page *page, void *kva);
 static void uninit_destroy(struct page *page);
 
@@ -59,7 +61,9 @@ static void uninit_destroy(struct page *page) {
 
     if (uninit->type == VM_TYPE(VM_ANON)) {
         if (info != NULL) {
+            lock_acquire(&file_lock);
             file_close(info->file);
+            lock_release(&file_lock);
             free(info);
         }
     } else if (uninit->type == VM_TYPE(VM_FILE)) {
