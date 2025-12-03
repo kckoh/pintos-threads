@@ -927,7 +927,7 @@ static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t 
         info->zero_bytes = page_zero_bytes;
 
         void *aux = info;
-        if (!vm_alloc_page_with_initializer(VM_FILE, upage, writable, lazy_load_segment, aux)) {
+        if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable, lazy_load_segment, aux)) {
             free(info);
             return false;
         }
