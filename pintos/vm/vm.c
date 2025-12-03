@@ -263,18 +263,16 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst,
             struct uninit_page *uninit = &page->uninit;
             void *aux = uninit->aux;
 
-            if (uninit->init == lazy_load_segment) {
-                struct lazy_load_aux *old_aux = (struct lazy_load_aux *)aux;
-                struct lazy_load_aux *new_aux = malloc(sizeof(struct lazy_load_aux));
-                if (new_aux == NULL)
-                    return false;
+            struct lazy_load_aux *old_aux = (struct lazy_load_aux *)aux;
+            struct lazy_load_aux *new_aux = malloc(sizeof(struct lazy_load_aux));
+            if (new_aux == NULL)
+                return false;
 
-                memcpy(new_aux, old_aux, sizeof(struct lazy_load_aux));
-                lock_acquire(&file_lock);
-                new_aux->file = file_reopen(old_aux->file);
-                lock_release(&file_lock);
-                aux = new_aux;
-            }
+            memcpy(new_aux, old_aux, sizeof(struct lazy_load_aux));
+            lock_acquire(&file_lock);
+            new_aux->file = file_reopen(old_aux->file);
+            lock_release(&file_lock);
+            aux = new_aux;
 
             if (!vm_alloc_page_with_initializer(uninit->type, page->va, page->writable,
                                                 uninit->init, aux))
@@ -306,7 +304,7 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst,
     return true;
 }
 
-void page_destructor(struct hash_elem *e, void *aux UNUSED) {
+void page_destructor(struct hash_elem *e, void *aux) {
     struct page *page = hash_entry(e, struct page, elem);
 
     // 페이지의 destroy 함수 호출
