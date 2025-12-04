@@ -859,7 +859,7 @@ static bool install_page(void *upage, void *kpage, bool writable) {
 /* 여기부터는 프로젝트 3 이후에 사용될 코드.
  * 프로젝트 2만을 위한 함수를 구현하려면 위 블록에 구현. */
 
-static bool lazy_load_segment(struct page *page, void *aux) {
+bool lazy_load_segment(struct page *page, void *aux) {
     /* TODO: Load the segment from the file */
     /* TODO: This called when the first page fault occurs on address VA. */
     /* TODO: VA is available when calling this function. */

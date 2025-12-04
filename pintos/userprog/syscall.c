@@ -1,10 +1,13 @@
 #include "userprog/syscall.h"
+#include "hash.h"
 #include "include/threads/init.h"
 #include "intrinsic.h"
+#include "list.h"
 #include "threads/flags.h"
 #include "threads/interrupt.h"
 #include "threads/loader.h"
 #include "threads/thread.h"
+#include "threads/vaddr.h"
 #include "userprog/gdt.h"
 #include <stdio.h>
 #include <syscall-nr.h>
@@ -16,6 +19,8 @@
 #include "threads/synch.h"
 #include "userprog/process.h"
 #include "vm/vm.h"
+#include "vm/vm_type.h"
+#include <stdlib.h>
 
 void syscall_entry(void);
 void syscall_handler(struct intr_frame *);
@@ -41,6 +46,9 @@ static unsigned sys_tell(int fd);
 static void sys_close(int fd);
 static void sys_exit(int status);
 static int sys_dup2(int oldfd, int newfd);
+
+static void *sys_mmap(void *addr, size_t length, int writable, int fd, off_t offset);
+static void sys_munmap(void *addr);
 
 struct lock file_lock;
 
@@ -166,6 +174,15 @@ void syscall_handler(struct intr_frame *f) {
     case SYS_DUP2:
         f->R.rax = sys_dup2(f->R.rdi, f->R.rsi);
         break;
+
+    case SYS_MMAP:
+        f->R.rax = sys_mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+        break;
+
+    case SYS_MUNMAP:
+        sys_munmap(f->R.rdi);
+        break;
+
     default:
         printf("system call! (unimplemented syscall number: %d)\n", syscall_num);
         thread_exit();
@@ -489,4 +506,38 @@ static int sys_dup2(int oldfd, int newfd) {
     }
 
     return newfd;
+}
+
+static void *sys_mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
+    // 유효성 검사
+    struct thread *curr_thread = thread_current();
+    valid_get_addr(addr);
+
+    if (pg_ofs(addr) != 0 || addr == 0)
+        return NULL;
+
+    if (offset % PGSIZE != 0)
+        return NULL;
+
+    if (length == 0)
+        return NULL;
+
+    if (fd < 2 || fd > curr_thread->fd_capacity)
+        return NULL;
+
+    struct file *file = curr_thread->fd_table[fd];
+    if (file == NULL || file_length(file) == 0)
+        return NULL;
+
+    return do_mmap(addr, length, writable, file, offset);
+}
+
+static void sys_munmap(void *addr) {
+    // 유효성 검사
+    valid_get_addr(addr);
+
+    if (pg_ofs(addr) != 0 || addr == 0)
+        return;
+
+    do_munmap(addr);
 }
