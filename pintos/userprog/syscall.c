@@ -102,6 +102,8 @@ void syscall_handler(struct intr_frame *f) {
     // System call number is in rax
     int syscall_num = f->R.rax;
 
+    thread_current()->user_rsp = f->rsp;
+
     switch (syscall_num) {
 
     case SYS_HALT:

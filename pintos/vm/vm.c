@@ -52,8 +52,6 @@ static struct frame *vm_evict_frame(void);
 /* Create the pending page object with initializer. If you want to create a
  * page, do not create it directly and make it through this function or
  * `vm_alloc_page`. */
-/* 초기화 함수와 함께 대기 중인 페이지 객체를 생성. 페이지를 생성하려면
- * 직접 생성하지 말고 이 함수나 `vm_alloc_page`를 통해 생성해야 함. */
 bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writable,
                                     vm_initializer *init, void *aux) {
 
@@ -62,14 +60,7 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
     struct supplemental_page_table *spt = &thread_current()->spt;
 
     /* Check wheter the upage is already occupied or not. */
-    /* upage가 이미 사용 중인지 확인 */
     if (spt_find_page(spt, upage) == NULL) {
-        /* TODO: Create the page, fetch the initialier according to the VM type,
-         * TODO: and then create "uninit" page struct by calling uninit_new. You
-         * TODO: should modify the field after calling the uninit_new. */
-        /* TODO: 페이지를 생성하고, VM 타입에 따라 초기화 함수를 가져온 다음,
-         * TODO: uninit_new를 호출하여 "uninit" 페이지 구조체를 생성.
-         * TODO: uninit_new 호출 후 필드를 수정해야 함. */
 
         struct page *page = malloc(sizeof(struct page));
         if (page == NULL)
@@ -172,7 +163,19 @@ static struct frame *vm_get_frame(void) {
 }
 
 /* Growing the stack. */
-static void vm_stack_growth(void *addr UNUSED) {}
+static void vm_stack_growth(void *addr) {
+
+    if (USER_STACK - (uintptr_t)addr > (1 << 20))
+        return;
+
+    addr = pg_round_down(addr);
+
+    if (!vm_alloc_page(VM_ANON | VM_MARKER_0, addr, true))
+        return;
+
+    if (!vm_claim_page(addr))
+        return;
+}
 
 /* Handle the fault on write_protected page */
 static bool vm_handle_wp(struct page *page UNUSED) {}
@@ -180,15 +183,28 @@ static bool vm_handle_wp(struct page *page UNUSED) {}
 /* Return true on success */
 bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write,
                          bool not_present UNUSED) {
-    struct supplemental_page_table *spt = &thread_current()->spt;
+    struct thread *curr = thread_current();
+    struct supplemental_page_table *spt = &curr->spt;
+    void *rsp;
 
     if (addr == NULL || !is_user_vaddr(addr))
         return false;
-    /* TODO: Validate the fault */
-    /* TODO: Your code goes here */
+
+    if (user)
+        rsp = f->rsp;
+    else
+        rsp = (void *)curr->user_rsp;
+
     struct page *page = spt_find_page(spt, addr);
-    if (!page)
-        return false;
+    if (!page) {
+        if (addr >= (char *)rsp - 8 && addr < (void *)USER_STACK) {
+            vm_stack_growth(addr);
+            page = spt_find_page(spt, addr);
+            if (!page)
+                return false;
+        } else
+            return false;
+    }
 
     return vm_do_claim_page(page);
 }
