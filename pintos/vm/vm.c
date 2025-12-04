@@ -172,7 +172,26 @@ static struct frame *vm_get_frame(void) {
 }
 
 /* Growing the stack. */
-static void vm_stack_growth(void *addr UNUSED) {}
+static bool vm_stack_growth(void *addr UNUSED) {
+    struct thread *curr_thread = thread_current();
+    void *stack_growth_bottom = pg_round_down(addr);
+
+    while (stack_growth_bottom < USER_STACK) {
+        struct page *page = spt_find_page(&curr_thread->spt, stack_growth_bottom);
+        if (page != NULL) {
+            break;
+        }
+
+        if (!vm_alloc_page(VM_ANON | VM_MARKER_0, stack_growth_bottom, true))
+            return false;
+
+        if (!vm_claim_page(stack_growth_bottom))
+            return false;
+
+        stack_growth_bottom += PGSIZE;
+    }
+    return true;
+}
 
 /* Handle the fault on write_protected page */
 static bool vm_handle_wp(struct page *page UNUSED) {}
@@ -180,17 +199,34 @@ static bool vm_handle_wp(struct page *page UNUSED) {}
 /* Return true on success */
 bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write,
                          bool not_present UNUSED) {
-    struct supplemental_page_table *spt = &thread_current()->spt;
+    struct thread *curr_thread = thread_current();
+    struct supplemental_page_table *spt = &curr_thread->spt;
 
     if (addr == NULL || !is_user_vaddr(addr))
         return false;
     /* TODO: Validate the fault */
     /* TODO: Your code goes here */
+    // 접근하려는 va에 페이지가 존재 하는지 확인
     struct page *page = spt_find_page(spt, addr);
-    if (!page)
-        return false;
+    // 페이지가 존재한다면 lazy loading  임으로 프레임 할당 후 연결
+    if (page) {
+        if (write && !page->writable)
+            return false;
 
-    return vm_do_claim_page(page);
+        return vm_do_claim_page(page);
+    }
+    // 페이지가 없다면 스택 확징이 필요한지 체크
+    else if (!page) {
+        uintptr_t rsp = user ? f->rsp : curr_thread->user_stack_rsp;
+
+        // 스택 확장이 가능한 주소 범위 접근이면 스택 확장
+        if (addr < USER_STACK && addr >= USER_STACK - (1 << 20))
+            if (addr >= (void *)((uint8_t *)rsp - 8)) {
+                return vm_stack_growth(addr);
+            }
+        // 아니면 그냥 폴트 임으로 실패 처리
+        return false;
+    }
 }
 
 /* Free the page.

@@ -15,6 +15,7 @@
 #include "include/threads/palloc.h"
 #include "threads/synch.h"
 #include "userprog/process.h"
+#include "vm/vm.h"
 
 void syscall_entry(void);
 void syscall_handler(struct intr_frame *);
@@ -101,6 +102,7 @@ void syscall_init(void) {
 void syscall_handler(struct intr_frame *f) {
     // System call number is in rax
     int syscall_num = f->R.rax;
+    thread_current()->user_stack_rsp = f->rsp;
 
     switch (syscall_num) {
 
@@ -188,6 +190,14 @@ static void valid_put_buffer(char *buffer, unsigned length) {
 
     char *end = buffer + length - 1;
     if (put_user(buffer, 0) == 0 || put_user(end, 0) == 0)
+        sys_exit(-1);
+
+    struct page *page_start = spt_find_page(&thread_current()->spt, buffer);
+    if (page_start && !page_start->writable)
+        sys_exit(-1);
+
+    struct page *page_end = spt_find_page(&thread_current()->spt, end);
+    if (page_end && !page_end->writable)
         sys_exit(-1);
 }
 

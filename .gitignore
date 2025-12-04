@@ -18,6 +18,7 @@
 *.devcontainer
 *.clangd
 *.test_status
+*.vscode
 
 # 빌드 디렉터리
 build/
