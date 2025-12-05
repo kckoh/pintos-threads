@@ -511,7 +511,8 @@ static int sys_dup2(int oldfd, int newfd) {
 static void *sys_mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
     // 유효성 검사
     struct thread *curr_thread = thread_current();
-    valid_get_addr(addr);
+    if (!is_user_vaddr(addr))
+        return NULL;
 
     if (pg_ofs(addr) != 0 || addr == 0)
         return NULL;
@@ -534,8 +535,6 @@ static void *sys_mmap(void *addr, size_t length, int writable, int fd, off_t off
 
 static void sys_munmap(void *addr) {
     // 유효성 검사
-    valid_get_addr(addr);
-
     if (pg_ofs(addr) != 0 || addr == 0)
         return;
 

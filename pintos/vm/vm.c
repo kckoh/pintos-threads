@@ -124,6 +124,7 @@ bool spt_insert_page(struct supplemental_page_table *spt UNUSED, struct page *pa
 }
 
 void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
+    hash_delete(&spt->spt, &page->elem);
     vm_dealloc_page(page);
 }
 
@@ -316,6 +317,9 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst,
             break;
         }
         case VM_FILE:
+            if (page->file.is_mmap)
+                break;
+
             if (!vm_alloc_page_with_initializer(page->operations->type, page->va, page->writable,
                                                 NULL, NULL))
                 return false;

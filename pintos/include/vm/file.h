@@ -9,6 +9,7 @@ enum vm_type;
 struct file_page {
     struct file *file;
     off_t ofs;
+    bool is_mmap;
 };
 
 void vm_file_init(void);

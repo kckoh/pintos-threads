@@ -869,11 +869,9 @@ bool lazy_load_segment(struct page *page, void *aux) {
     struct lazy_load_aux *arg = (struct lazy_load_aux *)aux;
     off_t read_bytes = file_read_at(arg->file, page->frame->kva, arg->page_read_bytes, arg->ofs);
     if (read_bytes != (int)arg->page_read_bytes) {
-        free(aux);
         return false;
     }
     memset(page->frame->kva + arg->page_read_bytes, 0, arg->page_zero_bytes);
-    free(aux);
     return true;
 }
 
