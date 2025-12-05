@@ -173,23 +173,14 @@ static struct frame *vm_get_frame(void) {
 
 /* Growing the stack. */
 static bool vm_stack_growth(void *addr UNUSED) {
-    struct thread *curr_thread = thread_current();
-    void *stack_growth_bottom = pg_round_down(addr);
+    void *page_addr = pg_round_down(addr);
 
-    while (stack_growth_bottom < USER_STACK) {
-        struct page *page = spt_find_page(&curr_thread->spt, stack_growth_bottom);
-        if (page != NULL) {
-            break;
-        }
+    if (!vm_alloc_page(VM_ANON | VM_MARKER_0, page_addr, true))
+        return false;
 
-        if (!vm_alloc_page(VM_ANON | VM_MARKER_0, stack_growth_bottom, true))
-            return false;
+    if (!vm_claim_page(page_addr))
+        return false;
 
-        if (!vm_claim_page(stack_growth_bottom))
-            return false;
-
-        stack_growth_bottom += PGSIZE;
-    }
     return true;
 }
 
@@ -216,14 +207,14 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
         return vm_do_claim_page(page);
     }
     // 페이지가 없다면 스택 확징이 필요한지 체크
-    else if (!page) {
+    else {
         uintptr_t rsp = user ? f->rsp : curr_thread->user_stack_rsp;
 
         // 스택 확장이 가능한 주소 범위 접근이면 스택 확장
-        if (addr < USER_STACK && addr >= USER_STACK - (1 << 20))
-            if (addr >= (void *)((uint8_t *)rsp - 8)) {
-                return vm_stack_growth(addr);
-            }
+        if (addr < USER_STACK && addr >= USER_STACK - (1 << 20) &&
+            addr >= (void *)((uint8_t *)rsp - 8)) {
+            return vm_stack_growth(addr);
+        }
         // 아니면 그냥 폴트 임으로 실패 처리
         return false;
     }
