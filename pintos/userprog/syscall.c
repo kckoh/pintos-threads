@@ -5,6 +5,7 @@
 #include "threads/interrupt.h"
 #include "threads/loader.h"
 #include "threads/thread.h"
+#include "threads/vaddr.h"
 #include "userprog/gdt.h"
 #include <stdio.h>
 #include <syscall-nr.h>
@@ -15,6 +16,7 @@
 #include "include/threads/palloc.h"
 #include "threads/synch.h"
 #include "userprog/process.h"
+#include "vm/vm.h"
 
 void syscall_entry(void);
 void syscall_handler(struct intr_frame *);
@@ -188,9 +190,16 @@ static void valid_get_buffer(char *buffer, unsigned length) {
 /* 버퍼에 쓰기 검사 */
 static void valid_put_buffer(char *buffer, unsigned length) {
 
-    char *end = buffer + length - 1;
-    if (put_user(buffer, 0) == 0 || put_user(end, 0) == 0)
-        sys_exit(-1);
+    char *start_addr = pg_round_down(buffer);
+    char *end_addr = pg_round_down(buffer + length - 1);
+
+    for (char *i = start_addr; i <= end_addr; i += PGSIZE) {
+        struct page *check_page = spt_find_page(&thread_current()->spt, i);
+        if (check_page && !check_page->writable)
+            sys_exit(-1);
+        if (put_user(i, 0) == 0)
+            sys_exit(-1);
+    }
 }
 
 static void sys_exit(int status) {
