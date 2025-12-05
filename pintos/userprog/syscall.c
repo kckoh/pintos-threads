@@ -101,6 +101,7 @@ void syscall_init(void) {
 void syscall_handler(struct intr_frame *f) {
     // System call number is in rax
     int syscall_num = f->R.rax;
+    thread_current()->saved_rsp = f->rsp;
 
     switch (syscall_num) {
 
@@ -185,9 +186,21 @@ static void valid_get_buffer(char *buffer, unsigned length) {
 }
 /* 버퍼에 쓰기 검사 */
 static void valid_put_buffer(char *buffer, unsigned length) {
-
     char *end = buffer + length - 1;
+
     if (put_user(buffer, 0) == 0 || put_user(end, 0) == 0)
+        sys_exit(-1);
+
+    struct supplemental_page_table *spt = &thread_current()->spt;
+
+    // 시작 페이지 확인
+    struct page *page = spt_find_page(spt, buffer);
+    if (page != NULL && !page->writable)
+        sys_exit(-1);
+
+    // 끝 주소 확인
+    page = spt_find_page(spt, end);
+    if (page != NULL && !page->writable)
         sys_exit(-1);
 }
 
@@ -339,9 +352,11 @@ static int sys_read(int fd, void *buffer, unsigned length) {
     if (length == 0)
         return 0;
 
-    valid_put_buffer(buffer, length); // 써보면서 확인해야함
+    // Check fd validity first before validating buffer
     if (fd < 0 || fd == STDOUT_FILENO || fd > thread_current()->fd_capacity)
         return -1;
+
+    valid_put_buffer(buffer, length); // 써보면서 확인해야함
 
     if (fd == 0) {
         for (unsigned i = 0; i < length; i++) {

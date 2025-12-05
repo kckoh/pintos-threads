@@ -107,7 +107,6 @@ static bool handle_syscall_fault(struct intr_frame *f) {
 
     if (f->R.rax == 0)
         return false;
-    // printf("done_주소임 : %d \n", f->R.rax);
     f->rip = f->R.rax;
     f->R.rax = -1;
     return true;

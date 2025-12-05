@@ -172,10 +172,27 @@ static struct frame *vm_get_frame(void) {
 }
 
 /* Growing the stack. */
-static void vm_stack_growth(void *addr UNUSED) {}
+static bool vm_stack_growth(void *addr UNUSED) {
+    void *page_addr = pg_round_down(addr);
+
+    // Allocate new stack page
+    if (!vm_alloc_page(VM_ANON | VM_MARKER_0, page_addr, true))
+        return false;
+
+    // Claim it immediately
+    if (!vm_claim_page(page_addr)){
+        return false;
+    }
+
+    return true;
+}
 
 /* Handle the fault on write_protected page */
-static bool vm_handle_wp(struct page *page UNUSED) {}
+static bool vm_handle_wp(struct page *page UNUSED) {
+    printf("[vm_handle_wp] Write to read-only page at %p, writable=%d\n",
+           page ? page->va : NULL, page ? page->writable : -1);
+    return false;  // TODO: Implement copy-on-write
+}
 
 /* Return true on success */
 bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write,
@@ -184,13 +201,45 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
 
     if (addr == NULL || !is_user_vaddr(addr))
         return false;
+
     /* TODO: Validate the fault */
-    /* TODO: Your code goes here */
     struct page *page = spt_find_page(spt, addr);
-    if (!page)
+
+    if (page) {
+        // Check write permission BEFORE loading page
+        if (write && !page->writable) {
+            // printf("[vm_try_handle_fault] Write to read-only page rejected!\n");
+            // 커널 컨텍스트에서 호출되더라도, 유저 프로세스가 read-only 페이지에
+            // write하려는 것이므로 프로세스를 종료해야 함
+            thread_current()->exit_status = -1;
+            thread_exit();
+            // return false;  // Reject write to read-only page
+        }
+        // Only claim if page is not present (lazy loading)
+        if (not_present)
+            return vm_do_claim_page(page);
+        // Write protection fault (for COW pages that are writable but need copying)
+        if (write)
+            return vm_handle_wp(page);
+        return false;
+    }
+
+    // Page doesn't exist - check if it's valid stack growth
+    void *rsp = user ? f->rsp : thread_current()->saved_rsp;
+
+    if (!user && rsp == NULL)
         return false;
 
-    return vm_do_claim_page(page);
+    // Check if addr is within valid stack growth range
+    if (addr >= USER_STACK - (1 << 20) && // Max 1MB stack
+        // addr >= rsp - 8
+        addr >= rsp - 8  // Standard for x86-64
+        && addr < USER_STACK //between kernel base and user stack. it should be invalid and return false;
+    ) {                // Allow push/pusha (8 bytes below rsp)
+        return vm_stack_growth(addr);
+    }
+
+    return false;
 }
 
 /* Free the page.
@@ -313,7 +362,7 @@ void page_destructor(struct hash_elem *e, void *aux) {
 
 /* Free the resource hold by the supplemental page table */
 void supplemental_page_table_kill(struct supplemental_page_table *spt) {
-    /* TODO: Destroy all the supplemental_page_table hold by thread and
-     * TODO: writeback all the modified contents to the storage. */
+    /* Destroy all the supplemental_page_table hold by thread and
+     * writeback all the modified contents to the storage. */
     hash_destroy(&spt->spt, page_destructor);
 }
