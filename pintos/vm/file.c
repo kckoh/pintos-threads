@@ -61,7 +61,9 @@ static void file_backed_destroy(struct page *page) {
     // mmap 페이지일때 더티 페이지 확인
     if (file_page->is_mmap) {
         if (page->frame && pml4_is_dirty(curr_thread->pml4, page->va)) {
+            lock_acquire(&file_lock);
             file_write_at(file_page->file, page->frame->kva, PGSIZE, file_page->ofs);
+            lock_release(&file_lock);
         }
     }
 }
@@ -72,8 +74,7 @@ void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t 
 
     // 기존 페이지와 충돌 검사
     void *u_page = addr;
-    void *end_page = pg_round_down(addr + length);
-    while (u_page <= end_page) {
+    while (u_page < addr + length) {
         if (spt_find_page(&curr_thread->spt, u_page) != NULL)
             return NULL;
         u_page += PGSIZE;
@@ -109,8 +110,7 @@ void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t 
     size_t remaining = length;
     size_t file_offset = offset;
 
-    while (start_page <= end_page) {
-        // Calculate how many bytes to read for this page
+    while (start_page < addr + length) {
         size_t bytes_left_in_file = file_len > file_offset ? file_len - file_offset : 0;
         size_t read_bytes = remaining < PGSIZE ? remaining : PGSIZE;
         if (read_bytes > bytes_left_in_file)
