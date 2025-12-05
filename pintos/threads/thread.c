@@ -422,7 +422,6 @@ static void init_thread(struct thread *t, const char *name, int priority) {
     list_init(&t->child_list);
     t->waiting_lock = NULL;
     t->exit_status = -1;
-
 #ifdef VM
     t->user_stack_rsp = NULL;
     list_init(&t->mmap_list);

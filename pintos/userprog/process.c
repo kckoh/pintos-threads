@@ -869,7 +869,9 @@ bool lazy_load_segment(struct page *page, void *aux) {
     /* TODO: 주소 VA에서 첫 번째 페이지 폴트가 발생할 때 호출됨. */
     /* TODO: 이 함수 호출 시 VA를 사용할 수 있음. */
     struct lazy_load_aux *arg = (struct lazy_load_aux *)aux;
+    lock_acquire(&file_lock);
     off_t read_bytes = file_read_at(arg->file, page->frame->kva, arg->page_read_bytes, arg->ofs);
+    lock_release(&file_lock);
     if (read_bytes != (int)arg->page_read_bytes) {
         return false;
     }
