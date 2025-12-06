@@ -7,12 +7,25 @@
 #include "threads/vaddr.h"
 #include "userprog/process.h"
 #include "userprog/syscall.h"
-#include "lib/kernel/list.h"
+#include "lib/kernel/hash.h"
 #include "vm/vm_type.h"
 #include <stdlib.h>
 #include <stdio.h>
 
 extern struct lock file_lock;
+
+/* Hash function for mmap_entry: hash by addr */
+unsigned mmap_hash(const struct hash_elem *e, void *aux UNUSED) {
+    struct mmap_entry *entry = hash_entry(e, struct mmap_entry, elem);
+    return hash_bytes(&entry->addr, sizeof(entry->addr));
+}
+
+/* Less function for mmap_entry: compare by addr */
+bool mmap_less(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED) {
+    struct mmap_entry *entry_a = hash_entry(a, struct mmap_entry, elem);
+    struct mmap_entry *entry_b = hash_entry(b, struct mmap_entry, elem);
+    return entry_a->addr < entry_b->addr;
+}
 
 static bool file_backed_swap_in(struct page *page, void *kva);
 static bool file_backed_swap_out(struct page *page);
@@ -95,7 +108,13 @@ void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t 
     mmap_entry->length = length;
     mmap_entry->offset = offset;
     mmap_entry->file = mmap_file;
-    list_push_back(&curr_thread->mmap_list, &mmap_entry->elem);
+
+    // 지연 초기화: 첫 mmap 요청 시 hash 초기화
+    if (!curr_thread->mmap_table_initialized) {
+        hash_init(&curr_thread->mmap_table, mmap_hash, mmap_less, NULL);
+        curr_thread->mmap_table_initialized = true;
+    }
+    hash_insert(&curr_thread->mmap_table, &mmap_entry->elem);
 
     // 페이지를 먼저 다 생성
     size_t page_count = (pg_round_up(addr + length) - pg_round_down(addr)) / PGSIZE;
@@ -179,20 +198,15 @@ cleanup:
 void do_munmap(void *addr) {
     struct thread *curr_thread = thread_current();
 
-    // addr의 mmap 정보 찾기
-    struct list_elem *e;
-    struct mmap_entry *mmap_entry;
-    for (e = list_begin(&curr_thread->mmap_list); e != list_end(&curr_thread->mmap_list);
-         e = list_next(e)) {
-        mmap_entry = list_entry(e, struct mmap_entry, elem);
-        if (mmap_entry->addr == addr) {
-            break;
-        }
-    }
+    // addr의 mmap 정보 찾기 (hash lookup)
+    struct mmap_entry lookup;
+    lookup.addr = addr;
+    struct hash_elem *found = hash_find(&curr_thread->mmap_table, &lookup.elem);
 
-    if (e == list_end(&curr_thread->mmap_list)) {
+    if (found == NULL)
         return;
-    }
+
+    struct mmap_entry *mmap_entry = hash_entry(found, struct mmap_entry, elem);
 
     // 페이지를 삭제
     size_t page_count = (pg_round_up(addr + mmap_entry->length) - pg_round_down(addr)) / PGSIZE;
@@ -211,6 +225,6 @@ void do_munmap(void *addr) {
     lock_release(&file_lock);
 
     // mmap_entry 삭제
-    list_remove(&mmap_entry->elem);
+    hash_delete(&curr_thread->mmap_table, &mmap_entry->elem);
     free(mmap_entry);
 }

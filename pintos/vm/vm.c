@@ -309,7 +309,7 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst,
         }
         case VM_FILE:
             if (page->file.is_mmap)
-                break;
+                continue;
 
             if (!vm_alloc_page_with_initializer(page->operations->type, page->va, page->writable,
                                                 NULL, NULL))

@@ -2,6 +2,7 @@
 #define VM_FILE_H
 #include "filesys/file.h"
 #include "vm/vm.h"
+#include "lib/kernel/hash.h"
 
 struct page;
 enum vm_type;
@@ -16,4 +17,8 @@ void vm_file_init(void);
 bool file_backed_initializer(struct page *page, enum vm_type type, void *kva);
 void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t offset);
 void do_munmap(void *va);
+
+/* Hash functions for mmap_table */
+unsigned mmap_hash(const struct hash_elem *e, void *aux);
+bool mmap_less(const struct hash_elem *a, const struct hash_elem *b, void *aux);
 #endif

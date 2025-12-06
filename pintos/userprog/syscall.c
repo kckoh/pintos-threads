@@ -197,16 +197,28 @@ static void valid_get_addr(void *addr) {
 }
 /* 버퍼에서 가져오기 검사 */
 static void valid_get_buffer(char *buffer, unsigned length) {
-
+    char *ptr = buffer;
     char *end = buffer + length - 1;
-    if (get_user(buffer) < 0 || get_user(end) < 0)
+
+    for (; ptr < end; ptr += PGSIZE) {
+        if (get_user(ptr) < 0)
+            sys_exit(-1);
+    }
+    // 마지막 바이트 체크
+    if (get_user(end) < 0)
         sys_exit(-1);
 }
 /* 버퍼에 쓰기 검사 */
 static void valid_put_buffer(char *buffer, unsigned length) {
-
+    char *ptr = buffer;
     char *end = buffer + length - 1;
-    if (put_user(buffer, 0) == 0 || put_user(end, 0) == 0)
+
+    for (; ptr < end; ptr += PGSIZE) {
+        if (put_user(ptr, 0) == 0)
+            sys_exit(-1);
+    }
+    // 마지막 바이트 체크
+    if (put_user(end, 0) == 0)
         sys_exit(-1);
 
     struct page *page_start = spt_find_page(&thread_current()->spt, buffer);
