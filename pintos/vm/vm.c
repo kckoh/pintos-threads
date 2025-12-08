@@ -96,7 +96,10 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
             free(page);
             goto err;
         }
+    } else {
+        goto err;
     }
+
     return true;
 err:
     return false;
@@ -288,9 +291,12 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst,
         struct page *page = hash_entry(hash_cur(&i), struct page, elem);
         switch (page->operations->type) {
         case VM_UNINIT: {
+
             struct uninit_page *uninit = &page->uninit;
             void *aux = uninit->aux;
 
+            if(VM_TYPE(uninit->type) == VM_FILE)
+                continue;
             struct lazy_load_aux *old_aux = (struct lazy_load_aux *)aux;
             struct lazy_load_aux *new_aux = malloc(sizeof(struct lazy_load_aux));
             if (new_aux == NULL)
@@ -308,10 +314,7 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst,
             break;
         }
         case VM_FILE:
-            if (!vm_alloc_page_with_initializer(page->operations->type, page->va, page->writable,
-                                                NULL, NULL))
-                return false;
-            break;
+            continue;
         case VM_ANON:
             if (!vm_alloc_page_with_initializer(page->operations->type, page->va, page->writable,
                                                 NULL, NULL))

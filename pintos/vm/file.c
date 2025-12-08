@@ -78,17 +78,20 @@ static void file_backed_destroy(struct page *page) {}
 /* Do the mmap */
 void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t offset) {
 
-    if (addr == 0 || pg_ofs(addr) != 0 || length == 0 || file_length(file) == 0 ||
-        file_length(file) <= offset)
-        goto error;
+    if (addr == 0 || pg_ofs(addr) != 0 || pg_ofs(offset) != 0 || length == 0 ||
+        file_length(file) == 0 || file_length(file) <= offset || is_kernel_vaddr(addr) ||
+        is_kernel_vaddr(addr + length - 1))
+        return NULL;
 
     file = file_reopen(file);
     if (file == NULL)
-        goto error;
+        return NULL;
 
     struct mmap_info *info = malloc(sizeof(struct mmap_info));
-    if (info == NULL)
-        goto error;
+    if (info == NULL) {
+        file_close(file);
+        return NULL;
+    }
     info->file = file;
     info->addr = addr;
     info->length = length;
@@ -101,8 +104,16 @@ void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t 
         size_t page_read_bytes = remain_length < PGSIZE ? remain_length : PGSIZE;
 
         struct lazy_load_aux *aux = malloc(sizeof(struct lazy_load_aux));
-        if (aux == NULL)
-            goto error;
+        if (aux == NULL) {
+            for (void *i = addr; i < current_addr; i += PGSIZE) {
+                struct page *cleanup_page = spt_find_page(&thread_current()->spt, i);
+                if (cleanup_page)
+                    spt_remove_page(&thread_current()->spt, cleanup_page);
+            }
+            free(info);
+            file_close(file);
+            return NULL;
+        }
         aux->file = file;
         aux->ofs = current_offset;
         aux->page_read_bytes = page_read_bytes;
@@ -116,7 +127,9 @@ void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t 
                     spt_remove_page(&thread_current()->spt, cleanup_page);
             }
             free(aux);
-            goto error;
+            free(info);
+            file_close(file);
+            return NULL;
         }
 
         current_offset += page_read_bytes;
@@ -127,16 +140,6 @@ void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t 
     list_push_back(&thread_current()->mmap_list, &info->elem);
 
     return addr;
-
-error:
-
-    if (file)
-        file_close(file);
-
-    if (info)
-        free(info);
-
-    return NULL;
 }
 
 /* Do the munmap */
