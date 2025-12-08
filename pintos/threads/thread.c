@@ -424,6 +424,7 @@ static void init_thread(struct thread *t, const char *name, int priority) {
     t->exit_status = -1;
 #ifdef VM
     t->user_stack_rsp = NULL;
+    list_init(&t->mmap_list);
 #endif
 }
 

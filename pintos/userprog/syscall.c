@@ -16,6 +16,7 @@
 #include "threads/synch.h"
 #include "userprog/process.h"
 #include "vm/vm.h"
+#include "vm/file.h"
 
 void syscall_entry(void);
 void syscall_handler(struct intr_frame *);
@@ -41,6 +42,8 @@ static unsigned sys_tell(int fd);
 static void sys_close(int fd);
 static void sys_exit(int status);
 static int sys_dup2(int oldfd, int newfd);
+static void *sys_mmap(void *addr, size_t length, int writable, int fd, off_t offset);
+static void sys_munmap(void *addr);
 
 struct lock file_lock;
 
@@ -166,6 +169,15 @@ void syscall_handler(struct intr_frame *f) {
     case SYS_DUP2:
         f->R.rax = sys_dup2(f->R.rdi, f->R.rsi);
         break;
+
+    case SYS_MMAP:
+        f->R.rax = sys_mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+        break;
+
+    case SYS_MUNMAP:
+        sys_munmap(f->R.rdi);
+        break;
+
     default:
         printf("system call! (unimplemented syscall number: %d)\n", syscall_num);
         thread_exit();
@@ -188,23 +200,23 @@ static void valid_get_buffer(char *buffer, unsigned length) {
 /* 버퍼에 쓰기 검사 */
 static void valid_put_buffer(char *buffer, unsigned length) {
 
-    char *end = buffer + length - 1;
-    if (put_user(buffer, 0) == 0 || put_user(end, 0) == 0)
-        sys_exit(-1);
+    char *start_addr = pg_round_down(buffer);
+    char *end_addr = pg_round_down(buffer + length - 1);
 
-    struct page *page_start = spt_find_page(&thread_current()->spt, buffer);
-    if (page_start && !page_start->writable)
-        sys_exit(-1);
-
-    struct page *page_end = spt_find_page(&thread_current()->spt, end);
-    if (page_end && !page_end->writable)
-        sys_exit(-1);
+    for (char *i = start_addr; i <= end_addr; i += PGSIZE) {
+        struct page *check_page = spt_find_page(&thread_current()->spt, i);
+        if (check_page && !check_page->writable)
+            sys_exit(-1);
+        if (put_user(i, 0) == 0)
+            sys_exit(-1);
+    }
 }
 
 static void sys_exit(int status) {
 
     struct thread *curr = thread_current();
-    curr->child_info->exit_status = status;
+    if (curr->child_info)
+        curr->child_info->exit_status = status;
     curr->exit_status = status;
     thread_exit();
 }
@@ -489,4 +501,22 @@ static int sys_dup2(int oldfd, int newfd) {
     }
 
     return newfd;
+}
+
+static void *sys_mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
+
+    struct thread *curr = thread_current();
+
+    if (fd < 2 || fd > curr->fd_capacity)
+        return NULL;
+
+    struct file *file = curr->fd_table[fd];
+    if (file == NULL)
+        return NULL;
+
+    return do_mmap(addr, length, writable, file, offset);
+}
+
+static void sys_munmap(void *addr) {
+    do_munmap(addr);
 }

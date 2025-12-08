@@ -211,7 +211,7 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
         uintptr_t rsp = user ? f->rsp : curr_thread->user_stack_rsp;
 
         // 스택 확장이 가능한 주소 범위 접근이면 스택 확장
-        if (addr < USER_STACK && addr >= USER_STACK - (1 << 20) &&
+        if (addr < (void *)USER_STACK && addr >= (void *)USER_STACK - (1 << 20) &&
             addr >= (void *)((uint8_t *)rsp - 8)) {
             return vm_stack_growth(addr);
         }
@@ -281,6 +281,8 @@ void supplemental_page_table_init(struct supplemental_page_table *spt) {
 bool supplemental_page_table_copy(struct supplemental_page_table *dst,
                                   struct supplemental_page_table *src) {
 
+    struct file *duplicated_file = NULL;
+
     struct hash_iterator i;
     hash_first(&i, &src->spt);
     while (hash_next(&i)) {
@@ -296,9 +298,13 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst,
                 return false;
 
             memcpy(new_aux, old_aux, sizeof(struct lazy_load_aux));
-            lock_acquire(&file_lock);
-            new_aux->file = file_reopen(old_aux->file);
-            lock_release(&file_lock);
+            if (duplicated_file == NULL) {
+                lock_acquire(&file_lock);
+                duplicated_file = file_duplicate(old_aux->file);
+                lock_release(&file_lock);
+            }
+            new_aux->file = duplicated_file;
+
             aux = new_aux;
 
             if (!vm_alloc_page_with_initializer(uninit->type, page->va, page->writable,

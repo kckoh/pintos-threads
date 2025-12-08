@@ -11,6 +11,8 @@
 #include "vm/uninit.h"
 #include "threads/synch.h"
 #include "vm/vm.h"
+#include <string.h>
+#include "userprog/process.h"
 
 extern struct lock file_lock;
 static bool uninit_initialize(struct page *page, void *kva);
