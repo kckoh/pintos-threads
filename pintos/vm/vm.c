@@ -124,6 +124,7 @@ bool spt_insert_page(struct supplemental_page_table *spt UNUSED, struct page *pa
 }
 
 void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
+    hash_delete(&spt->spt, &page->elem);
     vm_dealloc_page(page);
 }
 
@@ -211,7 +212,7 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
         uintptr_t rsp = user ? f->rsp : curr_thread->user_stack_rsp;
 
         // 스택 확장이 가능한 주소 범위 접근이면 스택 확장
-        if (addr < USER_STACK && addr >= USER_STACK - (1 << 20) &&
+        if (addr < USER_STACK && addr >= USER_STACK_BOTTOM &&
             addr >= (void *)((uint8_t *)rsp - 8)) {
             return vm_stack_growth(addr);
         }
@@ -287,8 +288,12 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst,
         struct page *page = hash_entry(hash_cur(&i), struct page, elem);
         switch (page->operations->type) {
         case VM_UNINIT: {
+
             struct uninit_page *uninit = &page->uninit;
             void *aux = uninit->aux;
+
+            if (uninit->type == VM_FILE)
+                continue;
 
             struct lazy_load_aux *old_aux = (struct lazy_load_aux *)aux;
             struct lazy_load_aux *new_aux = malloc(sizeof(struct lazy_load_aux));
@@ -307,10 +312,11 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst,
             break;
         }
         case VM_FILE:
-            if (!vm_alloc_page_with_initializer(page->operations->type, page->va, page->writable,
-                                                NULL, NULL))
-                return false;
-            break;
+            // if (!vm_alloc_page_with_initializer(page->operations->type, page->va, page->writable,
+            //                                     NULL, NULL))
+            //     return false;
+            // break;
+            continue;
         case VM_ANON:
             if (!vm_alloc_page_with_initializer(page->operations->type, page->va, page->writable,
                                                 NULL, NULL))
