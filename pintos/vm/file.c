@@ -4,6 +4,7 @@
 #include "filesys/file.h"
 #include "devices/disk.h"
 #include "filesys/off_t.h"
+#include "hash.h"
 #include "threads/interrupt.h"
 #include "threads/synch.h"
 #include "vm/vm.h"
@@ -107,7 +108,8 @@ void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t 
         aux->page_read_bytes = page_read_bytes;
         aux->page_zero_bytes = PGSIZE - page_read_bytes;
 
-        if (!vm_alloc_page_with_initializer(VM_FILE, current_addr, writable, lazy_load_segment, aux)) {
+        if (!vm_alloc_page_with_initializer(VM_FILE, current_addr, writable, lazy_load_segment,
+                                            aux)) {
             for (void *i = addr; i < current_addr; i += PGSIZE) {
                 struct page *cleanup_page = spt_find_page(&thread_current()->spt, i);
                 if (cleanup_page)
@@ -144,31 +146,38 @@ void do_munmap(void *addr) {
         return;
 
     struct mmap_info *info = NULL;
-    for(struct list_elem *i = list_begin(&thread_current()->mmap_list); i != list_end(&thread_current()->mmap_list); i = list_next(i)){
+    for (struct list_elem *i = list_begin(&thread_current()->mmap_list);
+         i != list_end(&thread_current()->mmap_list); i = list_next(i)) {
         struct mmap_info *temp = list_entry(i, struct mmap_info, elem);
-        if(info != NULL && info->addr == addr){
+        if (temp->addr == addr) {
             info = temp;
             break;
         }
     }
 
-    if(info == NULL) return;
+    if (info == NULL)
+        return;
 
     void *current_addr = info->addr;
     void *max_addr = current_addr + info->length;
     size_t remain_length = info->length;
 
-    for(void *i = current_addr; i < max_addr; i += PGSIZE){
+    for (void *i = current_addr; i < max_addr; i += PGSIZE) {
         struct page *current_page = spt_find_page(&thread_current()->spt, i);
-        if(current_page == NULL) continue;
-        if(VM_TYPE(current_page->operations->type) != VM_FILE) continue;
+        if (current_page == NULL)
+            continue;
 
-        struct file_page *current_file_page = &current_page->file;
-
-        if(current_page->frame != NULL && pml4_is_dirty(thread_current()->pml4, i)){
-            size_t page_write_bytes = remain_length < PGSIZE ? remain_length : PGSIZE;
-            file_write_at(info->file, current_page->frame->kva, page_write_bytes, current_file_page->offset);
+        if (VM_TYPE(current_page->operations->type) == VM_FILE) {
+            if (current_page->frame != NULL && pml4_is_dirty(thread_current()->pml4, i)) {
+                struct file_page *current_file_page = &current_page->file;
+                size_t page_write_bytes = remain_length < PGSIZE ? remain_length : PGSIZE;
+                file_write_at(info->file, current_page->frame->kva, page_write_bytes,
+                              current_file_page->offset);
+            }
         }
+
+        pml4_clear_page(thread_current()->pml4, i);
+        spt_remove_page(&thread_current()->spt, current_page);
 
         remain_length -= PGSIZE;
     }

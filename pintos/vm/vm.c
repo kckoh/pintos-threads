@@ -124,6 +124,7 @@ bool spt_insert_page(struct supplemental_page_table *spt UNUSED, struct page *pa
 }
 
 void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
+    hash_delete(&thread_current()->spt.spt, &page->elem);
     vm_dealloc_page(page);
 }
 
@@ -281,8 +282,6 @@ void supplemental_page_table_init(struct supplemental_page_table *spt) {
 bool supplemental_page_table_copy(struct supplemental_page_table *dst,
                                   struct supplemental_page_table *src) {
 
-    struct file *duplicated_file = NULL;
-
     struct hash_iterator i;
     hash_first(&i, &src->spt);
     while (hash_next(&i)) {
@@ -298,13 +297,9 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst,
                 return false;
 
             memcpy(new_aux, old_aux, sizeof(struct lazy_load_aux));
-            if (duplicated_file == NULL) {
-                lock_acquire(&file_lock);
-                duplicated_file = file_duplicate(old_aux->file);
-                lock_release(&file_lock);
-            }
-            new_aux->file = duplicated_file;
-
+            lock_acquire(&file_lock);
+            new_aux->file = file_reopen(old_aux->file);
+            lock_release(&file_lock);
             aux = new_aux;
 
             if (!vm_alloc_page_with_initializer(uninit->type, page->va, page->writable,
