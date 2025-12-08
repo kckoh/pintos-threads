@@ -67,4 +67,9 @@ static void uninit_destroy(struct page *page) {
 
     if (uninit->aux != NULL)
         free(uninit->aux);
+
+    if (page->frame != NULL) {
+        page->frame->page = NULL;
+        page->frame->owner = NULL;
+    }
 }

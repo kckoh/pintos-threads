@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include "vm/vm.h"
 #include <string.h>
+#include "list.h"
+#include "stdbool.h"
 #include "threads/synch.h"
 #include "vm/anon.h"
 #include "vm/file.h"
@@ -17,6 +19,7 @@
 #include "vm/vm_type.h"
 
 extern struct lock file_lock;
+static struct list frame_list;
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -27,6 +30,7 @@ void vm_init(void) {
     pagecache_init();
 #endif
     register_inspect_intr();
+    list_init(&frame_list);
     /* DO NOT MODIFY UPPER LINES. */
     /* TODO: Your code goes here. */
 }
@@ -130,19 +134,45 @@ void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
 
 /* Get the struct frame, that will be evicted. */
 static struct frame *vm_get_victim(void) {
-    struct frame *victim = NULL;
+    struct list_elem *e = list_begin(&frame_list);
     /* TODO: The policy for eviction is up to you. */
 
-    return victim;
+    while (true) {
+        struct frame *victim = list_entry(e, struct frame, elem);
+
+        /* Skip frames without valid page or owner */
+        if (victim->page == NULL || victim->owner == NULL) {
+            e = list_next(e);
+            if (e == list_end(&frame_list))
+                e = list_begin(&frame_list);
+            continue;
+        }
+
+        uint64_t *pml4 = victim->owner->pml4;
+        if (pml4_is_accessed(pml4, victim->page->va)) {
+            pml4_set_accessed(pml4, victim->page->va, false);
+
+        } else {
+            list_remove(e);
+            return victim;
+        }
+        e = list_next(e);
+        if (e == list_end(&frame_list)) {
+            e = list_begin(&frame_list);
+        }
+    }
 }
 
 /* Evict one page and return the corresponding frame.
  * Return NULL on error.*/
 static struct frame *vm_evict_frame(void) {
-    struct frame *victim UNUSED = vm_get_victim();
+    struct frame *victim = vm_get_victim();
     /* TODO: swap out the victim and return the evicted frame. */
+    swap_out(victim->page);
+    victim->page->frame = NULL;
+    victim->page = NULL;
 
-    return NULL;
+    return victim;
 }
 
 /* palloc() and get frame. If there is no available page, evict the page
@@ -160,15 +190,17 @@ static struct frame *vm_get_frame(void) {
     frame->kva = palloc_get_page(PAL_USER);
 
     if (!frame->kva) {
-        // TODO: do eviction later
         free(frame);
-        PANIC("todo");
+        frame = vm_evict_frame();
+        if (!frame)
+            PANIC("vm_get_frame: eviction failed");
     }
 
     frame->page = NULL;
 
     ASSERT(frame != NULL);
     ASSERT(frame->page == NULL);
+    list_push_back(&frame_list, &frame->elem);
     return frame;
 }
 
@@ -249,6 +281,7 @@ static bool vm_do_claim_page(struct page *page) {
 
     /* Set links */
     frame->page = page;
+    frame->owner = thread_current();
     page->frame = frame;
 
     /* TODO: Insert page table entry to map page's VA to frame's PA. */

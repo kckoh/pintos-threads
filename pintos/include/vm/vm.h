@@ -1,5 +1,6 @@
 #ifndef VM_VM_H
 #define VM_VM_H
+#include "list.h"
 #include "threads/palloc.h"
 #include <stdbool.h>
 #include "lib/kernel/hash.h"
@@ -44,6 +45,8 @@ struct page {
 struct frame {
     void *kva;
     struct page *page;
+    struct thread *owner; /* Thread that owns this frame's page */
+    struct list_elem elem;
 };
 
 /* The function table for page operations.
