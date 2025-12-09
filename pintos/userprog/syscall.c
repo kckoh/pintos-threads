@@ -200,8 +200,8 @@ static void valid_get_buffer(char *buffer, unsigned length) {
 /* 버퍼에 쓰기 검사 */
 static void valid_put_buffer(char *buffer, unsigned length) {
 
-    char *start_addr = pg_round_down(buffer);
-    char *end_addr = pg_round_down(buffer + length - 1);
+    char *start_addr = buffer;
+    char *end_addr = buffer + length - 1;
 
     for (char *i = start_addr; i <= end_addr; i += PGSIZE) {
         struct page *check_page = spt_find_page(&thread_current()->spt, i);
@@ -212,11 +212,26 @@ static void valid_put_buffer(char *buffer, unsigned length) {
     }
 }
 
+// static void valid_put_buffer(char *buffer, unsigned length) {
+
+//     char *end = buffer + length - 1;
+//     if (put_user(buffer, 0) == 0 || put_user(end, 0) == 0)
+//         sys_exit(-1);
+
+//     struct page *page_start = spt_find_page(&thread_current()->spt, buffer);
+//     if (page_start && !page_start->writable)
+//         sys_exit(-1);
+
+//     struct page *page_end = spt_find_page(&thread_current()->spt, end);
+//     if (page_end && !page_end->writable)
+//         sys_exit(-1);
+// }
+
 static void sys_exit(int status) {
 
     struct thread *curr = thread_current();
-    if (curr->child_info)
-        curr->child_info->exit_status = status;
+
+    curr->child_info->exit_status = status;
     curr->exit_status = status;
     thread_exit();
 }
