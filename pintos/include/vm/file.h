@@ -10,6 +10,7 @@ struct file_page {
      struct file *file;
      off_t offset;
      size_t length;
+     size_t mmap_total_length;
  };;
 
 void vm_file_init(void);

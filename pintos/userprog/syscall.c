@@ -579,6 +579,7 @@ static void *sys_mmap(void *addr, size_t length, int writable, int fd, off_t off
         aux->ofs = offset + i * PGSIZE;
         aux->page_read_bytes = page_read_bytes;
         aux->page_zero_bytes = PGSIZE - page_read_bytes;
+        aux->mmap_total_length = (i == 0) ? length : 0; // Only first page!
 
         if (!vm_alloc_page_with_initializer(VM_FILE, addr + i * PGSIZE, writable, lazy_load_segment,
                                             aux)) {

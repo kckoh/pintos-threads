@@ -30,6 +30,7 @@ bool file_backed_initializer(struct page *page, enum vm_type type, void *kva) {
     file_page->file = aux->file;
     file_page->offset = aux->ofs;
     file_page->length = aux->page_read_bytes;
+    file_page->mmap_total_length = aux->mmap_total_length;
     return true;
 }
 
@@ -88,29 +89,59 @@ void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t 
 void do_munmap(void *addr) {
 
     struct thread *curr = thread_current();
+    struct page *first_page = spt_find_page(&curr->spt, addr);
+    if (first_page == NULL)
+        return;
 
-    while (true) {
-        struct page *page = spt_find_page(&curr->spt, addr);
+    // Get total length from first page
+    size_t total_length;
+
+    if (first_page->operations->type == VM_FILE) {
+        total_length = first_page->file.mmap_total_length;
+    } else { // VM_UNINIT
+        total_length = ((struct lazy_load_aux *)first_page->uninit.aux)->mmap_total_length;
+    }
+    size_t num_pages = (total_length + PGSIZE - 1) / PGSIZE;
+
+    // while (true) {
+    //     struct page *page = spt_find_page(&curr->spt, addr);
+    //     if (page == NULL)
+    //         break;
+
+    //     // VM_FILE 페이지인지 확인 (UNINIT일 수도 있음)
+    //     if (page->operations->type == VM_FILE) {
+    //         // Claim된 페이지
+    //         struct file_page *fp = &page->file;
+
+    //         // Dirty면 write-back
+    //         if (pml4_is_dirty(curr->pml4, page->va)) {
+    //             file_write_at(fp->file, page->frame->kva, fp->length, fp->offset);
+    //         }
+
+    //         // 파일 닫기
+    //         file_close(fp->file);
+    //         fp->file = NULL; //(중복 close 방지)
+    //     }
+    //     // UNINIT 상태면 그냥 제거 (파일 접근 안 했으니 write 불필요)
+
+    //     spt_remove_page(&curr->spt, page);
+    //     addr += PGSIZE;
+    // }
+    for (size_t i = 0; i < num_pages; i++) {
+        void *page_addr = addr + (i * PGSIZE);
+        struct page *page = spt_find_page(&curr->spt, page_addr);
         if (page == NULL)
-            break;
+            continue;
 
-        // VM_FILE 페이지인지 확인 (UNINIT일 수도 있음)
-        if (page->operations->type == VM_FILE) {
-            // Claim된 페이지
+        if (page->operations->type == VM_FILE && page->frame != NULL) {
             struct file_page *fp = &page->file;
-
-            // Dirty면 write-back
             if (pml4_is_dirty(curr->pml4, page->va)) {
                 file_write_at(fp->file, page->frame->kva, fp->length, fp->offset);
             }
-
-            // 파일 닫기
             file_close(fp->file);
-            fp->file = NULL; //(중복 close 방지)
+            fp->file = NULL;
         }
-        // UNINIT 상태면 그냥 제거 (파일 접근 안 했으니 write 불필요)
 
         spt_remove_page(&curr->spt, page);
-        addr += PGSIZE;
     }
 }
