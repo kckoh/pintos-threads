@@ -1,5 +1,7 @@
 /* file.c: Implementation of memory backed file object (mmaped object). */
 
+#include "threads/palloc.h"
+#include "threads/thread.h"
 #include "vm/vm.h"
 #include "userprog/process.h"
 #include "threads/vaddr.h" // ← 추가! (PGSIZE 정의)
@@ -36,12 +38,31 @@ bool file_backed_initializer(struct page *page, enum vm_type type, void *kva) {
 
 /* Swap in the page by read contents from the file. */
 static bool file_backed_swap_in(struct page *page, void *kva) {
-    struct file_page *file_page UNUSED = &page->file;
+    struct file_page *file_page = &page->file;
+    off_t read_bytes;
+
+    if (page->frame != NULL) {
+        read_bytes = file_read_at(file_page->file, kva, file_page->length, file_page->offset);
+        if (read_bytes < 0)
+            return false;
+        memset(kva + read_bytes, 0, PGSIZE - read_bytes);
+    }
+
+    return true;
 }
 
 /* Swap out the page by writeback contents to the file. */
 static bool file_backed_swap_out(struct page *page) {
-    struct file_page *file_page UNUSED = &page->file;
+    struct file_page *file_page = &page->file;
+
+    if (page->frame != NULL) {
+        if (pml4_is_dirty(thread_current()->pml4, page->va)) {
+            file_write_at(file_page->file, page->frame->kva, file_page->length, file_page->offset);
+        }
+        pml4_clear_page(thread_current()->pml4, page->va);
+    }
+
+    return true;
 }
 
 /* Destory the file backed page. PAGE will be freed by the caller. */
@@ -51,6 +72,7 @@ static void file_backed_destroy(struct page *page) {
     if (file_page->file == NULL) {
         // do_munmap에서 이미 처리됨
         if (page->frame != NULL) {
+            list_remove(&page->frame->elem);
             free(page->frame);
         }
         return;
@@ -78,6 +100,7 @@ static void file_backed_destroy(struct page *page) {
 
     // 프레임 해제
     if (page->frame != NULL) {
+        list_remove(&page->frame->elem);
         free(page->frame);
     }
 }
@@ -103,30 +126,6 @@ void do_munmap(void *addr) {
     }
     size_t num_pages = (total_length + PGSIZE - 1) / PGSIZE;
 
-    // while (true) {
-    //     struct page *page = spt_find_page(&curr->spt, addr);
-    //     if (page == NULL)
-    //         break;
-
-    //     // VM_FILE 페이지인지 확인 (UNINIT일 수도 있음)
-    //     if (page->operations->type == VM_FILE) {
-    //         // Claim된 페이지
-    //         struct file_page *fp = &page->file;
-
-    //         // Dirty면 write-back
-    //         if (pml4_is_dirty(curr->pml4, page->va)) {
-    //             file_write_at(fp->file, page->frame->kva, fp->length, fp->offset);
-    //         }
-
-    //         // 파일 닫기
-    //         file_close(fp->file);
-    //         fp->file = NULL; //(중복 close 방지)
-    //     }
-    //     // UNINIT 상태면 그냥 제거 (파일 접근 안 했으니 write 불필요)
-
-    //     spt_remove_page(&curr->spt, page);
-    //     addr += PGSIZE;
-    // }
     for (size_t i = 0; i < num_pages; i++) {
         void *page_addr = addr + (i * PGSIZE);
         struct page *page = spt_find_page(&curr->spt, page_addr);

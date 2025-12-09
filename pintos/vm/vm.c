@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include "vm/vm.h"
 #include <string.h>
+#include "list.h"
+#include "threads/palloc.h"
 #include "threads/synch.h"
 #include "vm/anon.h"
 #include "vm/file.h"
@@ -17,6 +19,7 @@
 #include "vm/vm_type.h"
 
 extern struct lock file_lock;
+static struct list frame_list;
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -29,6 +32,7 @@ void vm_init(void) {
     register_inspect_intr();
     /* DO NOT MODIFY UPPER LINES. */
     /* TODO: Your code goes here. */
+    list_init(&frame_list);
 }
 
 /* Get the type of the page. This function is useful if you want to know the
@@ -130,19 +134,25 @@ void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
 
 /* Get the struct frame, that will be evicted. */
 static struct frame *vm_get_victim(void) {
-    struct frame *victim = NULL;
-    /* TODO: The policy for eviction is up to you. */
-
-    return victim;
+    if(!list_empty(&frame_list)){
+        struct frame *victim = list_entry(list_pop_front(&frame_list), struct frame, elem);
+        return victim;
+    }
+    return NULL;
 }
 
 /* Evict one page and return the corresponding frame.
  * Return NULL on error.*/
 static struct frame *vm_evict_frame(void) {
-    struct frame *victim UNUSED = vm_get_victim();
-    /* TODO: swap out the victim and return the evicted frame. */
+    struct frame *victim = vm_get_victim();
+    if(victim == NULL)
+        return NULL;
 
-    return NULL;
+    swap_out(victim->page);
+
+    victim->page->frame = NULL;
+
+    return victim;
 }
 
 /* palloc() and get frame. If there is no available page, evict the page
@@ -160,9 +170,8 @@ static struct frame *vm_get_frame(void) {
     frame->kva = palloc_get_page(PAL_USER);
 
     if (!frame->kva) {
-        // TODO: do eviction later
         free(frame);
-        PANIC("todo");
+        frame = vm_evict_frame();
     }
 
     frame->page = NULL;
@@ -250,6 +259,7 @@ static bool vm_do_claim_page(struct page *page) {
     /* Set links */
     frame->page = page;
     page->frame = frame;
+    list_push_back(&frame_list, &frame->elem);
 
     /* TODO: Insert page table entry to map page's VA to frame's PA. */
     if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable)) {
