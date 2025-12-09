@@ -6,6 +6,7 @@
 #include "threads/loader.h"
 #include "threads/thread.h"
 #include "userprog/gdt.h"
+#include <stddef.h>
 #include <stdio.h>
 #include <syscall-nr.h>
 
@@ -16,6 +17,7 @@
 #include "threads/synch.h"
 #include "userprog/process.h"
 #include "vm/vm.h"
+#include "threads/vaddr.h"
 
 void syscall_entry(void);
 void syscall_handler(struct intr_frame *);
@@ -41,6 +43,8 @@ static unsigned sys_tell(int fd);
 static void sys_close(int fd);
 static void sys_exit(int status);
 static int sys_dup2(int oldfd, int newfd);
+static void *sys_mmap(void *addr, size_t length, int writable, int fd, off_t offset);
+static void sys_munmap(void *addr);
 
 struct lock file_lock;
 
@@ -166,6 +170,15 @@ void syscall_handler(struct intr_frame *f) {
     case SYS_DUP2:
         f->R.rax = sys_dup2(f->R.rdi, f->R.rsi);
         break;
+
+    case SYS_MMAP:
+        f->R.rax = sys_mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+        break;
+
+    case SYS_MUNMAP:
+        sys_munmap(f->R.rdi);
+        break;
+
     default:
         printf("system call! (unimplemented syscall number: %d)\n", syscall_num);
         thread_exit();
@@ -489,4 +502,109 @@ static int sys_dup2(int oldfd, int newfd) {
     }
 
     return newfd;
+}
+
+static void *sys_mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
+
+    if (!is_user_vaddr(addr) || !is_user_vaddr(addr + length - 1)) {
+        return NULL;
+    }
+
+    // 1. Validation
+    if (addr == NULL || addr == 0 || length == 0 || fd < 2) {
+        return NULL;
+    }
+
+    void *map_end = addr + length;
+    bool overlaps_stack = (addr < USER_STACK) && (map_end > USER_STACK_BOTTOM);
+    if (overlaps_stack) {
+        return NULL;
+    }
+
+    // addr must be page-aligned
+    if (pg_round_down(addr) != addr) {
+        return NULL;
+    }
+
+    // offset must be page-aligned
+    if (offset % PGSIZE != 0) {
+        return NULL;
+    }
+
+    // Get file
+    struct file **fd_table = thread_current()->fd_table;
+    if (fd >= thread_current()->fd_capacity || fd_table[fd] == NULL) {
+        return NULL;
+    }
+
+    struct file *file = fd_table[fd];
+
+    lock_acquire(&file_lock);
+    off_t file_len = file_length(file);
+    lock_release(&file_lock);
+
+    if (file_len == 0 || offset > file_len) {
+        return NULL;
+    }
+    size_t file_remaining = (size_t)(file_len - offset);
+    // first loop to check if the va is already mapped
+    size_t page_count = (size_t)pg_round_up(length) / PGSIZE;
+
+    for (size_t i = 0; i < page_count; i++) {
+        struct page *page = spt_find_page(&thread_current()->spt, addr + i * PGSIZE);
+        if (page != NULL) {
+            return NULL;
+        }
+    }
+
+    // second loop to initialize and save
+
+    size_t remaining = length;
+    for (size_t i = 0; i < page_count; i++) {
+        struct lazy_load_aux *aux = malloc(sizeof(struct lazy_load_aux));
+        if (aux == NULL) {
+            goto roll_back;
+        }
+
+        aux->file = file_reopen(file);
+        if (aux->file == NULL) { // ← 체크 필요!
+            free(aux);
+            goto roll_back;
+        }
+        size_t page_bytes = remaining >= PGSIZE ? PGSIZE : remaining;
+        size_t page_read_bytes = page_bytes;
+        if (page_read_bytes > file_remaining)
+            page_read_bytes = file_remaining;
+
+        aux->ofs = offset + i * PGSIZE;
+        aux->page_read_bytes = page_read_bytes;
+        aux->page_zero_bytes = PGSIZE - page_read_bytes;
+        aux->mmap_total_length = (i == 0) ? length : 0; // Only first page!
+
+        if (!vm_alloc_page_with_initializer(VM_FILE, addr + i * PGSIZE, writable, lazy_load_segment,
+                                            aux)) {
+            file_close(aux->file);
+            free(aux);
+            goto roll_back;
+        }
+
+        remaining -= page_bytes;
+        file_remaining -= page_read_bytes;
+    }
+
+    return addr;
+
+roll_back:
+    // 이미 할당된 페이지들 제거
+    for (size_t i = 0; i < page_count; i++) {
+        struct page *page = spt_find_page(&thread_current()->spt, addr + i * PGSIZE);
+        if (page != NULL) {
+            spt_remove_page(&thread_current()->spt, page);
+        }
+    }
+    return NULL;
+}
+
+static void sys_munmap(void *addr) {
+    do_munmap(addr);
 }

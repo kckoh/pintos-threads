@@ -11,6 +11,7 @@
 #include "vm/uninit.h"
 #include "threads/synch.h"
 #include "vm/vm.h"
+#include "userprog/process.h"
 
 extern struct lock file_lock;
 static bool uninit_initialize(struct page *page, void *kva);
@@ -65,6 +66,15 @@ static void uninit_destroy(struct page *page) {
     /* TODO: Fill this function.
      * TODO: If you don't have anything to do, just return. */
 
-    if (uninit->aux != NULL)
+     if (uninit->aux != NULL) {
+        // mmap의 경우 aux에 file이 있으므로 닫아야 함
+        if (VM_TYPE(uninit->type) == VM_FILE) {
+
+        struct lazy_load_aux *ma = uninit->aux;
+            if (ma->file != NULL) {
+                file_close(ma->file);
+            }
+        }
         free(uninit->aux);
+    }
 }

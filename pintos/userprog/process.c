@@ -621,7 +621,9 @@ static bool load(const char **argv, int argc, struct intr_frame *if_) {
     process_activate(thread_current());
 
     /* Open executable file. */
+    lock_acquire(&file_lock); // ← 추가!
     file = filesys_open(argv[0]);
+    lock_release(&file_lock); // ← 추가!
 
     if (file == NULL) {
         printf("load: %s: open failed\n", argv[0]);
@@ -859,7 +861,7 @@ static bool install_page(void *upage, void *kpage, bool writable) {
 /* 여기부터는 프로젝트 3 이후에 사용될 코드.
  * 프로젝트 2만을 위한 함수를 구현하려면 위 블록에 구현. */
 
-static bool lazy_load_segment(struct page *page, void *aux) {
+bool lazy_load_segment(struct page *page, void *aux) {
     /* TODO: Load the segment from the file */
     /* TODO: This called when the first page fault occurs on address VA. */
     /* TODO: VA is available when calling this function. */
@@ -867,9 +869,9 @@ static bool lazy_load_segment(struct page *page, void *aux) {
     /* TODO: 주소 VA에서 첫 번째 페이지 폴트가 발생할 때 호출됨. */
     /* TODO: 이 함수 호출 시 VA를 사용할 수 있음. */
     struct lazy_load_aux *arg = (struct lazy_load_aux *)aux;
-    lock_acquire(&file_lock);
+    // lock_acquire(&file_lock);
     off_t read_bytes = file_read_at(arg->file, page->frame->kva, arg->page_read_bytes, arg->ofs);
-    lock_release(&file_lock);
+    // lock_release(&file_lock);
     if (read_bytes != (int)arg->page_read_bytes) {
         free(aux);
         return false;
